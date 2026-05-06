@@ -1,14 +1,47 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
-import { initializeApp, getApps, getApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, query, where, orderBy } from 'firebase/firestore';
+import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
+import { getAuth, signInAnonymously, onAuthStateChanged, User, Auth } from 'firebase/auth';
+import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, Firestore } from 'firebase/firestore';
 import { 
-  Plus, Building2, UserPlus, Download, Trash2, Edit2, ChevronRight, 
-  FileText, Search, Printer, Mail, Send, CheckCircle2, X, Cloud, 
-  ShieldCheck, ExternalLink, Info, Database, Fingerprint, Lock, 
-  LogOut, Users, IndianRupee, Calendar, Upload, Image as ImageIcon,
-  TrendingUp, Filter
+  Plus, Building2, UserPlus, Trash2, Edit2, ChevronRight, 
+  FileText, Search, Printer, Mail, X, Cloud, 
+  ShieldCheck, ExternalLink, Info, Fingerprint, Lock, 
+  LogOut, Users, TrendingUp, Calendar, Image as ImageIcon
 } from 'lucide-react';
+
+// --- Interfaces for TypeScript Safety ---
+interface Organization {
+  id: string;
+  name: string;
+  pan: string;
+  regNo: string;
+  address: string;
+  signatureBase64?: string | null;
+}
+
+interface Donor {
+  id: string;
+  name: string;
+  pan: string;
+  email: string;
+  phone?: string;
+  address: string;
+}
+
+interface Donation {
+  id: string;
+  orgId: string;
+  donorId: string;
+  amount: number;
+  date: string;
+  paymentMode: string;
+  refNo?: string;
+}
+
+interface ReceiptData {
+  donor: Donor | undefined;
+  donation: Donation;
+}
 
 // --- Your Hardcoded Firebase Configuration ---
 const firebaseConfig = {
@@ -26,62 +59,68 @@ const VIEWS = {
   DASHBOARD: 'dashboard',
   DONORS: 'donors', 
   LEDGER: 'ledger'  
-};
+} as const;
+
+type ViewType = typeof VIEWS[keyof typeof VIEWS];
 
 const PAYMENT_MODES = ['Online Transfer', 'UPI', 'Cheque', 'Cash', 'Other'];
 
 // Helper: Amount in Words (Indian Numbering System)
-const numberToWords = (num) => {
+const numberToWords = (num: number | string): string => {
   const a = ['', 'One ', 'Two ', 'Three ', 'Four ', 'Five ', 'Six ', 'Seven ', 'Eight ', 'Nine ', 'Ten ', 'Eleven ', 'Twelve ', 'Thirteen ', 'Fourteen ', 'Fifteen ', 'Sixteen ', 'Seventeen ', 'Eighteen ', 'Nineteen '];
   const b = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
-  if ((num = num.toString()).length > 9) return 'Value too high';
-  let n = ('000000000' + num).substr(-9).match(/^(\d{2})(\d{2})(\d{2})(\d{1})(\d{2})$/);
+  
+  let nStr = num.toString();
+  if (nStr.length > 9) return 'Value too high';
+  
+  let n = ('000000000' + nStr).substr(-9).match(/^(\d{2})(\d{2})(\d{2})(\d{1})(\d{2})$/);
   if (!n) return ''; 
+  
   let str = '';
-  str += (n[1] != 0) ? (a[Number(n[1])] || b[n[1][0]] + ' ' + a[n[1][1]]) + 'Crore ' : '';
-  str += (n[2] != 0) ? (a[Number(n[2])] || b[n[2][0]] + ' ' + a[n[2][1]]) + 'Lakh ' : '';
-  str += (n[3] != 0) ? (a[Number(n[3])] || b[n[3][0]] + ' ' + a[n[3][1]]) + 'Thousand ' : '';
-  str += (n[4] != 0) ? (a[Number(n[4])] || b[n[4][0]] + ' ' + a[n[4][1]]) + 'Hundred ' : '';
-  str += (n[5] != 0) ? ((str != '') ? 'and ' : '') + (a[Number(n[5])] || b[n[5][0]] + ' ' + a[n[5][1]]) + 'Only ' : '';
+  str += (parseInt(n[1]) !== 0) ? (a[Number(n[1])] || b[parseInt(n[1][0])] + ' ' + a[parseInt(n[1][1])]) + 'Crore ' : '';
+  str += (parseInt(n[2]) !== 0) ? (a[Number(n[2])] || b[parseInt(n[2][0])] + ' ' + a[parseInt(n[2][1])]) + 'Lakh ' : '';
+  str += (parseInt(n[3]) !== 0) ? (a[Number(n[3])] || b[parseInt(n[3][0])] + ' ' + a[parseInt(n[3][1])]) + 'Thousand ' : '';
+  str += (parseInt(n[4]) !== 0) ? (a[Number(n[4])] || b[parseInt(n[4][0])] + ' ' + a[parseInt(n[4][1])]) + 'Hundred ' : '';
+  str += (parseInt(n[5]) !== 0) ? ((str !== '') ? 'and ' : '') + (a[Number(n[5])] || b[parseInt(n[5][0])] + ' ' + a[parseInt(n[5][1])]) + 'Only ' : '';
   return str.trim();
 };
 
 export default function App() {
-  const [user, setUser] = useState(null);
-  const [isAuthorized, setIsAuthorized] = useState(localStorage.getItem('isAuthorized_80G') === 'true');
-  const [currentView, setCurrentView] = useState(VIEWS.DASHBOARD);
+  const [user, setUser] = useState<User | null>(null);
+  const [isAuthorized, setIsAuthorized] = useState<boolean>(localStorage.getItem('isAuthorized_80G') === 'true');
+  const [currentView, setCurrentView] = useState<ViewType>(VIEWS.DASHBOARD);
   
   // Data State
-  const [organizations, setOrganizations] = useState([]);
-  const [masterDonors, setMasterDonors] = useState([]); 
-  const [allDonations, setAllDonations] = useState([]);
+  const [organizations, setOrganizations] = useState<Organization[]>([]);
+  const [masterDonors, setMasterDonors] = useState<Donor[]>([]); 
+  const [allDonations, setAllDonations] = useState<Donation[]>([]);
   
   // Selection & UI State
-  const [selectedOrg, setSelectedOrg] = useState(null);
-  const [isLoading, setIsLoading] = useState(true);
-  const [loginError, setLoginError] = useState('');
-  const [isOrgModalOpen, setIsOrgModalOpen] = useState(false);
-  const [isDonorModalOpen, setIsDonorModalOpen] = useState(false);
-  const [isDonationModalOpen, setIsDonationModalOpen] = useState(false);
-  const [isReceiptModalOpen, setIsReceiptModalOpen] = useState(false);
-  const [isEmailModalOpen, setIsEmailModalOpen] = useState(false);
-  const [editingItem, setEditingItem] = useState(null);
-  const [activeReceiptData, setActiveReceiptData] = useState(null);
+  const [selectedOrg, setSelectedOrg] = useState<Organization | null>(null);
+  const [isLoading, setIsLoading] = useState<boolean>(true);
+  const [loginError, setLoginError] = useState<string>('');
+  const [isOrgModalOpen, setIsOrgModalOpen] = useState<boolean>(false);
+  const [isDonorModalOpen, setIsDonorModalOpen] = useState<boolean>(false);
+  const [isDonationModalOpen, setIsDonationModalOpen] = useState<boolean>(false);
+  const [isReceiptModalOpen, setIsReceiptModalOpen] = useState<boolean>(false);
+  const [isEmailModalOpen, setIsEmailModalOpen] = useState<boolean>(false);
+  const [editingItem, setEditingItem] = useState<any>(null);
+  const [activeReceiptData, setActiveReceiptData] = useState<ReceiptData | null>(null);
   
   // Filter States
-  const [searchTerm, setSearchTerm] = useState('');
-  const [startDate, setStartDate] = useState('');
-  const [endDate, setEndDate] = useState('');
+  const [searchTerm, setSearchTerm] = useState<string>('');
+  const [startDate, setStartDate] = useState<string>('');
+  const [endDate, setEndDate] = useState<string>('');
 
-  const firebaseRefs = useRef({ auth: null, db: null });
+  const firebaseRefs = useRef<{ auth: Auth | null; db: Firestore | null }>({ auth: null, db: null });
 
   // --- 1. Firebase Initialization ---
   useEffect(() => {
     const init = async () => {
       try {
-        const app = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
-        const auth = getAuth(app);
-        const db = getFirestore(app);
+        const app: FirebaseApp = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+        const auth: Auth = getAuth(app);
+        const db: Firestore = getFirestore(app);
         firebaseRefs.current = { auth, db };
 
         await signInAnonymously(auth);
@@ -103,15 +142,14 @@ export default function App() {
     const { db } = firebaseRefs.current;
     if (!user || !isAuthorized || !db) return;
 
-    // We store data under users/{uid} for security and multi-tenancy
     const orgsRef = collection(db, 'users', user.uid, 'organizations');
-    const unsubOrgs = onSnapshot(orgsRef, (s) => setOrganizations(s.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const unsubOrgs = onSnapshot(orgsRef, (s) => setOrganizations(s.docs.map(d => ({ id: d.id, ...d.data() } as Organization))));
 
     const donorsRef = collection(db, 'users', user.uid, 'donors');
-    const unsubDonors = onSnapshot(donorsRef, (s) => setMasterDonors(s.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const unsubDonors = onSnapshot(donorsRef, (s) => setMasterDonors(s.docs.map(d => ({ id: d.id, ...d.data() } as Donor))));
 
     const donationsRef = collection(db, 'users', user.uid, 'donations');
-    const unsubDonations = onSnapshot(donationsRef, (s) => setAllDonations(s.docs.map(d => ({ id: d.id, ...d.data() }))));
+    const unsubDonations = onSnapshot(donationsRef, (s) => setAllDonations(s.docs.map(d => ({ id: d.id, ...d.data() } as Donation))));
 
     return () => { unsubOrgs(); unsubDonors(); unsubDonations(); };
   }, [user, isAuthorized]);
@@ -128,9 +166,9 @@ export default function App() {
   }, [organizations, masterDonors, allDonations]);
 
   // --- 4. Handlers ---
-  const handleLogin = (e) => {
+  const handleLogin = (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
-    const fd = new FormData(e.target);
+    const fd = new FormData(e.currentTarget);
     if (fd.get('email') === 'admin@agrawalfoundation.org' && fd.get('password') === 'Password@123') {
       setIsAuthorized(true);
       localStorage.setItem('isAuthorized_80G', 'true');
@@ -142,8 +180,8 @@ export default function App() {
     localStorage.removeItem('isAuthorized_80G');
   };
 
-  const handleImageUpload = (e, callback) => {
-    const file = e.target.files[0];
+  const handleImageUpload = (e: React.ChangeEvent<HTMLInputElement>, callback: (res: string | ArrayBuffer | null) => void) => {
+    const file = e.target.files?.[0];
     if (file) {
       if (file.size > 500000) return alert("Image must be under 500KB");
       const reader = new FileReader();
@@ -152,7 +190,7 @@ export default function App() {
     }
   };
 
-  const upsert = async (collectionName, data, id = null) => {
+  const upsert = async (collectionName: string, data: any, id: string | null = null) => {
     const { db } = firebaseRefs.current;
     if (!user || !db) return;
     try {
@@ -163,7 +201,7 @@ export default function App() {
     } catch (err) { alert("Database error. Action failed."); return false; }
   };
 
-  const remove = async (collectionName, id) => {
+  const remove = async (collectionName: string, id: string) => {
     const { db } = firebaseRefs.current;
     if (!user || !db || !confirm("Delete permanently?")) return;
     try {
@@ -188,7 +226,7 @@ export default function App() {
         
         return matchesSearch && matchesStart && matchesEnd;
       })
-      .sort((a, b) => new Date(b.date) - new Date(a.date));
+      .sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
   }, [allDonations, selectedOrg, masterDonors, searchTerm, startDate, endDate]);
 
   if (isLoading) return <div className="min-h-screen flex items-center justify-center bg-slate-50"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-blue-600"></div></div>;
@@ -402,7 +440,7 @@ export default function App() {
       {/* --- MODALS --- */}
       
       {/* 1. Official 80G Receipt (Print Optimized) */}
-      {isReceiptModalOpen && activeReceiptData && (
+      {isReceiptModalOpen && activeReceiptData && selectedOrg && (
         <div className="fixed inset-0 bg-slate-900/95 backdrop-blur-xl z-[60] flex items-center justify-center p-4 overflow-y-auto print:bg-white print:p-0">
           <div className="bg-white rounded-[2.5rem] w-full max-w-4xl shadow-2xl relative print:shadow-none print:rounded-none animate-in zoom-in-95">
             <div className="absolute -top-16 right-0 flex gap-4 print:hidden">
@@ -427,7 +465,7 @@ export default function App() {
                   </div>
                 </div>
                 <div className="space-y-10 text-2xl leading-[1.6] mb-20 text-slate-800">
-                  <p>Received with thanks from <strong>{activeReceiptData.donor.name}</strong> (PAN: <span className="font-mono font-black">{activeReceiptData.donor.pan}</span>)</p>
+                  <p>Received with thanks from <strong>{activeReceiptData.donor?.name || 'Unknown'}</strong> (PAN: <span className="font-mono font-black">{activeReceiptData.donor?.pan || 'N/A'}</span>)</p>
                   <p>A sum of <strong>INR {activeReceiptData.donation.amount.toLocaleString('en-IN')}/-</strong></p>
                   <div className="bg-slate-50 p-6 rounded-2xl border-l-8 border-slate-900 font-sans">
                     <p className="text-xs font-black text-slate-400 uppercase mb-2 tracking-widest">Amount in Words</p>
@@ -454,7 +492,7 @@ export default function App() {
       {isDonorModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-[2.5rem] w-full max-w-xl shadow-2xl animate-in zoom-in-95">
-            <form onSubmit={async (e) => { e.preventDefault(); const fd = new FormData(e.target); const data = Object.fromEntries(fd); if(await upsert('donors', data, editingItem?.id)) setIsDonorModalOpen(false); }} className="p-10 space-y-8">
+            <form onSubmit={async (e: React.FormEvent<HTMLFormElement>) => { e.preventDefault(); const fd = new FormData(e.currentTarget); const data = Object.fromEntries(fd); if(await upsert('donors', data, editingItem?.id)) setIsDonorModalOpen(false); }} className="p-10 space-y-8">
               <h2 className="text-3xl font-black">{editingItem ? 'Update' : 'Add'} Donor Profile</h2>
               <div className="space-y-6">
                 <input required name="name" defaultValue={editingItem?.name} placeholder="Donor Full Name" className="w-full px-6 py-4 border-2 border-slate-100 rounded-2xl outline-none focus:border-blue-500 font-bold" />
@@ -475,10 +513,20 @@ export default function App() {
       )}
 
       {/* 3. Donation Transaction Modal */}
-      {isDonationModalOpen && (
+      {isDonationModalOpen && selectedOrg && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-[2.5rem] w-full max-w-xl shadow-2xl animate-in zoom-in-95">
-            <form onSubmit={async (e) => { e.preventDefault(); const fd = new FormData(e.target); const data = Object.fromEntries(fd); data.amount = parseFloat(data.amount); data.orgId = selectedOrg.id; if(await upsert('donations', data)) setIsDonationModalOpen(false); }} className="p-10 space-y-8">
+            <form onSubmit={async (e: React.FormEvent<HTMLFormElement>) => { 
+              e.preventDefault(); 
+              const fd = new FormData(e.currentTarget); 
+              const amount = parseFloat(fd.get('amount') as string);
+              const data = {
+                ...Object.fromEntries(fd),
+                amount: amount,
+                orgId: selectedOrg.id
+              }; 
+              if(await upsert('donations', data)) setIsDonationModalOpen(false); 
+            }} className="p-10 space-y-8">
               <h2 className="text-3xl font-black">Record Donation</h2>
               <div className="space-y-6">
                 <div className="space-y-2">
@@ -524,7 +572,7 @@ export default function App() {
       {isOrgModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-[2.5rem] w-full max-w-xl shadow-2xl animate-in zoom-in-95">
-            <form onSubmit={async (e) => { e.preventDefault(); const fd = new FormData(e.target); const data = Object.fromEntries(fd); data.signatureBase64 = editingItem?.signatureBase64; if(await upsert('organizations', data, editingItem?.id)) setIsOrgModalOpen(false); }} className="p-10 space-y-8">
+            <form onSubmit={async (e: React.FormEvent<HTMLFormElement>) => { e.preventDefault(); const fd = new FormData(e.currentTarget); const data = {...Object.fromEntries(fd), signatureBase64: editingItem?.signatureBase64}; if(await upsert('organizations', data, editingItem?.id)) setIsOrgModalOpen(false); }} className="p-10 space-y-8">
               <h2 className="text-3xl font-black tracking-tight">{editingItem ? 'Update' : 'Add'} Foundation</h2>
               <div className="space-y-6">
                 <input required name="name" defaultValue={editingItem?.name} placeholder="Official Name" className="w-full px-6 py-4 border-2 border-slate-100 rounded-2xl outline-none font-bold" />
@@ -540,12 +588,12 @@ export default function App() {
                     {editingItem?.signatureBase64 ? (
                       <div className="relative group">
                         <img src={editingItem.signatureBase64} className="h-16 w-32 object-contain bg-white rounded border" alt="Signature" />
-                        <button type="button" onClick={() => setEditingItem({...editingItem, signatureBase64: null})} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 shadow-lg"><X size={12}/></button>
+                        <button type="button" onClick={() => setEditingItem((prev: any) => ({...prev, signatureBase64: null}))} className="absolute -top-2 -right-2 bg-red-500 text-white rounded-full p-1 shadow-lg"><X size={12}/></button>
                       </div>
                     ) : (
                       <div className="flex flex-col items-center justify-center w-full py-4 text-slate-400">
                         <ImageIcon className="mb-2" size={24} />
-                        <input type="file" accept="image/*" className="hidden" id="sig-upload" onChange={(e) => handleImageUpload(e, (base64) => setEditingItem({...editingItem, signatureBase64: base64}))} />
+                        <input type="file" accept="image/*" className="hidden" id="sig-upload" onChange={(e) => handleImageUpload(e, (base64) => setEditingItem((prev: any) => ({...prev, signatureBase64: base64})))} />
                         <label htmlFor="sig-upload" className="text-xs font-bold text-blue-600 cursor-pointer hover:underline">Upload PNG/JPG Signature</label>
                       </div>
                     )}
@@ -562,14 +610,14 @@ export default function App() {
       )}
 
       {/* 5. Email Drafting Tool */}
-      {isEmailModalOpen && activeReceiptData && (
+      {isEmailModalOpen && activeReceiptData && selectedOrg && (
         <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-xl z-[70] flex items-center justify-center p-4">
           <div className="bg-white rounded-[3rem] w-full max-w-md shadow-2xl overflow-hidden animate-in slide-in-from-bottom-10">
             <div className="bg-slate-900 p-12 text-white text-center relative">
               <button onClick={() => setIsEmailModalOpen(false)} className="absolute top-8 right-8 text-slate-500 hover:text-white transition-colors"><X size={24}/></button>
               <Mail className="w-16 h-16 text-blue-400 mx-auto mb-6" />
               <h2 className="text-3xl font-black">Email Receipt</h2>
-              <p className="text-slate-400 font-bold mt-2 text-sm">{activeReceiptData.donor.email}</p>
+              <p className="text-slate-400 font-bold mt-2 text-sm">{activeReceiptData.donor?.email || 'N/A'}</p>
             </div>
             <div className="p-10 space-y-8">
               <div className="bg-blue-50 p-6 rounded-3xl border border-blue-100 flex gap-4 text-blue-800 text-[11px] font-medium leading-relaxed">
@@ -584,6 +632,7 @@ export default function App() {
                 </div>
               </div>
               <button onClick={() => {
+                if (!activeReceiptData.donor) return;
                 const subject = encodeURIComponent(`80G Receipt - ${selectedOrg.name}`);
                 const body = encodeURIComponent(`Dear ${activeReceiptData.donor.name},\n\nThank you for your generous contribution of ₹${activeReceiptData.donation.amount.toLocaleString('en-IN')}.\n\nPlease find attached your 80G tax certificate.\n\nWarm regards,\n${selectedOrg.name}`);
                 const mailtoUrl = `mailto:${activeReceiptData.donor.email}?subject=${subject}&body=${body}`;
