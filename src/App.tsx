@@ -1,12 +1,13 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, User, Auth } from 'firebase/auth';
-import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, Firestore } from 'firebase/firestore';
+import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, Firestore, QuerySnapshot, DocumentData } from 'firebase/firestore';
 import { 
   Plus, Building2, UserPlus, Trash2, Edit2, ChevronRight, 
-  FileText, Search, Printer, Mail, X, Cloud, 
+  FileText, Search, Printer, Mail, X, 
   ShieldCheck, ExternalLink, Info, Fingerprint, Lock, 
-  LogOut, Users, TrendingUp, Calendar, Image as ImageIcon
+  LogOut, Users, TrendingUp, Calendar, Image as ImageIcon,
+  Database
 } from 'lucide-react';
 
 // --- Interfaces for TypeScript Safety ---
@@ -125,7 +126,7 @@ export default function App() {
 
         await signInAnonymously(auth);
 
-        onAuthStateChanged(auth, (u) => {
+        onAuthStateChanged(auth, (u: User | null) => {
           setUser(u);
           setIsLoading(false);
         });
@@ -143,13 +144,13 @@ export default function App() {
     if (!user || !isAuthorized || !db) return;
 
     const orgsRef = collection(db, 'users', user.uid, 'organizations');
-    const unsubOrgs = onSnapshot(orgsRef, (s) => setOrganizations(s.docs.map(d => ({ id: d.id, ...d.data() } as Organization))));
+    const unsubOrgs = onSnapshot(orgsRef, (s: QuerySnapshot<DocumentData>) => setOrganizations(s.docs.map(d => ({ id: d.id, ...d.data() } as Organization))));
 
     const donorsRef = collection(db, 'users', user.uid, 'donors');
-    const unsubDonors = onSnapshot(donorsRef, (s) => setMasterDonors(s.docs.map(d => ({ id: d.id, ...d.data() } as Donor))));
+    const unsubDonors = onSnapshot(donorsRef, (s: QuerySnapshot<DocumentData>) => setMasterDonors(s.docs.map(d => ({ id: d.id, ...d.data() } as Donor))));
 
     const donationsRef = collection(db, 'users', user.uid, 'donations');
-    const unsubDonations = onSnapshot(donationsRef, (s) => setAllDonations(s.docs.map(d => ({ id: d.id, ...d.data() } as Donation))));
+    const unsubDonations = onSnapshot(donationsRef, (s: QuerySnapshot<DocumentData>) => setAllDonations(s.docs.map(d => ({ id: d.id, ...d.data() } as Donation))));
 
     return () => { unsubOrgs(); unsubDonors(); unsubDonations(); };
   }, [user, isAuthorized]);
