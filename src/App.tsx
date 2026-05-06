@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, User, Auth } from 'firebase/auth';
-import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, Firestore, QuerySnapshot, DocumentData } from 'firebase/firestore';
+import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, Firestore, QuerySnapshot, DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
 import { 
   Plus, Building2, UserPlus, Trash2, Edit2, ChevronRight, 
   FileText, Search, Printer, Mail, X, 
@@ -71,19 +71,33 @@ const numberToWords = (num: number | string): string => {
   const a = ['', 'One ', 'Two ', 'Three ', 'Four ', 'Five ', 'Six ', 'Seven ', 'Eight ', 'Nine ', 'Ten ', 'Eleven ', 'Twelve ', 'Thirteen ', 'Fourteen ', 'Fifteen ', 'Sixteen ', 'Seventeen ', 'Eighteen ', 'Nineteen '];
   const b = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
   
-  let nStr = num.toString();
+  const nStr = num.toString();
   if (nStr.length > 9) return 'Value too high';
   
-  let n = ('000000000' + nStr).substr(-9).match(/^(\d{2})(\d{2})(\d{2})(\d{1})(\d{2})$/);
-  if (!n) return ''; 
+  const match = ('000000000' + nStr).substr(-9).match(/^(\d{2})(\d{2})(\d{2})(\d{1})(\d{2})$/);
+  if (!match) return ''; 
   
   let str = '';
-  str += (parseInt(n[1]) !== 0) ? (a[Number(n[1])] || b[parseInt(n[1][0])] + ' ' + a[parseInt(n[1][1])]) + 'Crore ' : '';
-  str += (parseInt(n[2]) !== 0) ? (a[Number(n[2])] || b[parseInt(n[2][0])] + ' ' + a[parseInt(n[2][1])]) + 'Lakh ' : '';
-  str += (parseInt(n[3]) !== 0) ? (a[Number(n[3])] || b[parseInt(n[3][0])] + ' ' + a[parseInt(n[3][1])]) + 'Thousand ' : '';
-  str += (parseInt(n[4]) !== 0) ? (a[Number(n[4])] || b[parseInt(n[4][0])] + ' ' + a[parseInt(n[4][1])]) + 'Hundred ' : '';
-  str += (parseInt(n[5]) !== 0) ? ((str !== '') ? 'and ' : '') + (a[Number(n[5])] || b[parseInt(n[5][0])] + ' ' + a[parseInt(n[5][1])]) + 'Only ' : '';
-  return str.trim();
+  // Helper to handle groups (Crore, Lakh, etc)
+  const getPart = (valStr: string) => {
+    const val = parseInt(valStr);
+    if (val === 0) return '';
+    return (a[val] || b[parseInt(valStr[0])] + ' ' + a[parseInt(valStr[1])]);
+  };
+
+  const crore = getPart(match[1]);
+  const lakh = getPart(match[2]);
+  const thousand = getPart(match[3]);
+  const hundred = a[parseInt(match[4])];
+  const tens = getPart(match[5]);
+
+  if (crore) str += crore + 'Crore ';
+  if (lakh) str += lakh + 'Lakh ';
+  if (thousand) str += thousand + 'Thousand ';
+  if (hundred) str += hundred + 'Hundred ';
+  if (tens) str += (str !== '' ? 'and ' : '') + tens;
+  
+  return str.trim() + ' Only';
 };
 
 export default function App() {
@@ -144,13 +158,19 @@ export default function App() {
     if (!user || !isAuthorized || !db) return;
 
     const orgsRef = collection(db, 'users', user.uid, 'organizations');
-    const unsubOrgs = onSnapshot(orgsRef, (s: QuerySnapshot<DocumentData>) => setOrganizations(s.docs.map(d => ({ id: d.id, ...d.data() } as Organization))));
+    const unsubOrgs = onSnapshot(orgsRef, (s: QuerySnapshot<DocumentData>) => {
+      setOrganizations(s.docs.map((d: QueryDocumentSnapshot<DocumentData>) => ({ id: d.id, ...d.data() } as Organization)));
+    });
 
     const donorsRef = collection(db, 'users', user.uid, 'donors');
-    const unsubDonors = onSnapshot(donorsRef, (s: QuerySnapshot<DocumentData>) => setMasterDonors(s.docs.map(d => ({ id: d.id, ...d.data() } as Donor))));
+    const unsubDonors = onSnapshot(donorsRef, (s: QuerySnapshot<DocumentData>) => {
+      setMasterDonors(s.docs.map((d: QueryDocumentSnapshot<DocumentData>) => ({ id: d.id, ...d.data() } as Donor)));
+    });
 
     const donationsRef = collection(db, 'users', user.uid, 'donations');
-    const unsubDonations = onSnapshot(donationsRef, (s: QuerySnapshot<DocumentData>) => setAllDonations(s.docs.map(d => ({ id: d.id, ...d.data() } as Donation))));
+    const unsubDonations = onSnapshot(donationsRef, (s: QuerySnapshot<DocumentData>) => {
+      setAllDonations(s.docs.map((d: QueryDocumentSnapshot<DocumentData>) => ({ id: d.id, ...d.data() } as Donation)));
+    });
 
     return () => { unsubOrgs(); unsubDonors(); unsubDonations(); };
   }, [user, isAuthorized]);
@@ -340,7 +360,7 @@ export default function App() {
                   <button onClick={() => setCurrentView(VIEWS.DASHBOARD)} className="p-3 bg-white border border-slate-200 rounded-xl"><X size={20} className="text-slate-400" /></button>
                   <h1 className="text-4xl font-black tracking-tight">Master Donors</h1>
                 </div>
-                <button onClick={() => { setEditingItem(null); setIsDonorModalOpen(true); }} className="bg-blue-600 text-white px-8 py-4 rounded-2xl font-black shadow-xl"><UserPlus size={20} /> New Donor Profile</button>
+                <button onClick={() => { setEditingItem(null); setIsDonorModalOpen(true); }} className="bg-blue-600 text-white px-8 py-4 rounded-2xl font-black shadow-xl"><UserPlus size={20} /> New Profile</button>
              </div>
              <div className="bg-white rounded-[2.5rem] border border-slate-200 shadow-xl overflow-hidden">
                 <table className="w-full text-left">
@@ -378,7 +398,6 @@ export default function App() {
               <button onClick={() => { setEditingItem(null); setIsDonationModalOpen(true); }} className="bg-blue-600 text-white px-8 py-4 rounded-2xl font-black shadow-xl"><Plus size={20} /> Record Donation</button>
             </div>
 
-            {/* Range & Search Filters */}
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
               <div className="md:col-span-2 relative">
                 <Search className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" size={18} />
@@ -411,7 +430,7 @@ export default function App() {
                           <td className="px-10 py-8 text-right font-black text-2xl">₹{dn.amount.toLocaleString('en-IN')}</td>
                           <td className="px-10 py-8">
                             <div className="text-sm font-bold">{dn.date}</div>
-                            <div className="text-[10px] text-slate-400 uppercase font-black">{dn.paymentMode}</div>
+                            <div className="text-[10px] text-slate-400 uppercase font-bold">{dn.paymentMode}</div>
                           </td>
                           <td className="px-10 py-8">
                             <div className="flex justify-center gap-3">
@@ -438,14 +457,12 @@ export default function App() {
         <div className="text-slate-500 font-black tracking-widest uppercase">Secured by Agrawal Foundation</div>
       </footer>
 
-      {/* --- MODALS --- */}
-      
-      {/* 1. Official 80G Receipt (Print Optimized) */}
+      {/* MODALS */}
       {isReceiptModalOpen && activeReceiptData && selectedOrg && (
         <div className="fixed inset-0 bg-slate-900/95 backdrop-blur-xl z-[60] flex items-center justify-center p-4 overflow-y-auto print:bg-white print:p-0">
           <div className="bg-white rounded-[2.5rem] w-full max-w-4xl shadow-2xl relative print:shadow-none print:rounded-none animate-in zoom-in-95">
             <div className="absolute -top-16 right-0 flex gap-4 print:hidden">
-              <button onClick={() => window.print()} className="bg-white px-8 py-3 rounded-full font-black shadow-2xl flex items-center gap-3 text-slate-900"><Printer size={22} /> Save as PDF</button>
+              <button onClick={() => window.print()} className="bg-white px-8 py-3 rounded-full font-black shadow-2xl flex items-center gap-3 text-slate-900"><Printer size={22} /> Save PDF</button>
               <button onClick={() => setIsReceiptModalOpen(false)} className="bg-white/10 p-3 rounded-full text-white"><X size={28} /></button>
             </div>
             <div id="printable-receipt" className="p-16 text-slate-900 font-serif bg-white">
@@ -475,7 +492,7 @@ export default function App() {
                   <p>Via <strong>{activeReceiptData.donation.paymentMode}</strong> {activeReceiptData.donation.refNo && <span className="text-slate-400">(Ref: {activeReceiptData.donation.refNo})</span>}.</p>
                 </div>
                 <div className="flex justify-between items-end font-sans">
-                  <div className="text-[10px] text-slate-300 font-bold uppercase tracking-widest max-w-xs leading-relaxed">Generated electronically. This certificate is valid for tax exemption under Section 80G. Audit Hash: {activeReceiptData.donation.id.slice(0,16)}</div>
+                  <div className="text-[10px] text-slate-300 font-bold uppercase tracking-widest max-w-xs leading-relaxed">Generated electronically. This certificate is valid for tax exemption under IT Act. Hash: {activeReceiptData.donation.id.slice(0,16)}</div>
                   <div className="text-right">
                     <p className="text-sm font-black mb-4">For {selectedOrg.name}</p>
                     {selectedOrg.signatureBase64 && <img src={selectedOrg.signatureBase64} className="h-16 w-40 object-contain mx-auto mb-2" alt="Signature" />}
@@ -489,7 +506,6 @@ export default function App() {
         </div>
       )}
 
-      {/* 2. Donor Profile Modal */}
       {isDonorModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-[2.5rem] w-full max-w-xl shadow-2xl animate-in zoom-in-95">
@@ -506,24 +522,23 @@ export default function App() {
               </div>
               <div className="flex gap-4">
                 <button type="button" onClick={() => setIsDonorModalOpen(false)} className="flex-1 py-5 border-2 rounded-3xl font-bold text-slate-400">Cancel</button>
-                <button type="submit" className="flex-1 py-5 bg-blue-600 text-white rounded-3xl font-black shadow-xl">Save to Directory</button>
+                <button type="submit" className="flex-1 py-5 bg-blue-600 text-white rounded-3xl font-black shadow-xl">Save Record</button>
               </div>
             </form>
           </div>
         </div>
       )}
 
-      {/* 3. Donation Transaction Modal */}
       {isDonationModalOpen && selectedOrg && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-[2.5rem] w-full max-w-xl shadow-2xl animate-in zoom-in-95">
             <form onSubmit={async (e: React.FormEvent<HTMLFormElement>) => { 
               e.preventDefault(); 
               const fd = new FormData(e.currentTarget); 
-              const amount = parseFloat(fd.get('amount') as string);
+              const amountStr = fd.get('amount') as string;
               const data = {
                 ...Object.fromEntries(fd),
-                amount: amount,
+                amount: parseFloat(amountStr),
                 orgId: selectedOrg.id
               }; 
               if(await upsert('donations', data)) setIsDonationModalOpen(false); 
@@ -533,7 +548,7 @@ export default function App() {
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Select Donor</label>
                   <select required name="donorId" className="w-full px-6 py-4 border-2 border-slate-100 rounded-2xl font-bold outline-none bg-white">
-                    <option value="">-- Choose Donor from Master List --</option>
+                    <option value="">-- Choose Donor --</option>
                     {masterDonors.map(m => <option key={m.id} value={m.id}>{m.name} ({m.pan})</option>)}
                   </select>
                 </div>
@@ -569,7 +584,6 @@ export default function App() {
         </div>
       )}
 
-      {/* 4. Organization Setup Modal */}
       {isOrgModalOpen && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-[2.5rem] w-full max-w-xl shadow-2xl animate-in zoom-in-95">
@@ -595,7 +609,7 @@ export default function App() {
                       <div className="flex flex-col items-center justify-center w-full py-4 text-slate-400">
                         <ImageIcon className="mb-2" size={24} />
                         <input type="file" accept="image/*" className="hidden" id="sig-upload" onChange={(e) => handleImageUpload(e, (base64) => setEditingItem((prev: any) => ({...prev, signatureBase64: base64})))} />
-                        <label htmlFor="sig-upload" className="text-xs font-bold text-blue-600 cursor-pointer hover:underline">Upload PNG/JPG Signature</label>
+                        <label htmlFor="sig-upload" className="text-xs font-bold text-blue-600 cursor-pointer hover:underline">Upload Signature</label>
                       </div>
                     )}
                   </div>
@@ -610,7 +624,6 @@ export default function App() {
         </div>
       )}
 
-      {/* 5. Email Drafting Tool */}
       {isEmailModalOpen && activeReceiptData && selectedOrg && (
         <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-xl z-[70] flex items-center justify-center p-4">
           <div className="bg-white rounded-[3rem] w-full max-w-md shadow-2xl overflow-hidden animate-in slide-in-from-bottom-10">
