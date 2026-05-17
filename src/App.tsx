@@ -5,12 +5,13 @@ import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot
 import { 
   Plus, Building2, UserPlus, Trash2, Edit2, ChevronRight, 
   FileText, Search, Mail, X, Download, Eye,
-  ShieldCheck, ExternalLink, Info, Fingerprint, Lock, 
+  ShieldCheck, ExternalLink, Fingerprint, Lock, 
   LogOut, Users, TrendingUp, Calendar, Image as ImageIcon,
   Database
 } from 'lucide-react';
 import { ReceiptCertificate } from './components/ReceiptCertificate';
 import { downloadReceiptPdf, getReceiptFilename, openReceiptPdfInNewTab } from './utils/receiptPdf';
+import { sendReceiptEmailToDonor } from './utils/sendReceiptEmail';
 
 // --- Interfaces for TypeScript Safety ---
 interface Organization {
@@ -91,6 +92,9 @@ export default function App() {
   const [activeReceiptData, setActiveReceiptData] = useState<ReceiptData | null>(null);
   const [isPdfGenerating, setIsPdfGenerating] = useState<boolean>(false);
   const [pendingPdfAction, setPendingPdfAction] = useState<'download' | 'open' | null>(null);
+  const [isEmailSending, setIsEmailSending] = useState<boolean>(false);
+  const [emailSendError, setEmailSendError] = useState<string | null>(null);
+  const [emailSendSuccess, setEmailSendSuccess] = useState<boolean>(false);
   
   // Filter States
   const [searchTerm, setSearchTerm] = useState<string>('');
@@ -120,7 +124,10 @@ export default function App() {
       if (action === 'download') {
         await downloadReceiptPdf(element, filename);
       } else {
-        await openReceiptPdfInNewTab(element);
+        const title = activeReceiptData.donor?.name
+          ? `80G Receipt — ${activeReceiptData.donor.name} | ${selectedOrg.name}`
+          : `80G Receipt | ${selectedOrg.name}`;
+        await openReceiptPdfInNewTab(element, { title });
       }
     } catch (err) {
       console.error(err);
@@ -139,6 +146,53 @@ export default function App() {
     setActiveReceiptData({ donor, donation });
     setIsReceiptModalOpen(false);
     setPendingPdfAction('download');
+  };
+
+  const openEmailModal = (donor: Donor | undefined, donation: Donation) => {
+    setActiveReceiptData({ donor, donation });
+    setEmailSendError(null);
+    setEmailSendSuccess(false);
+    setIsEmailModalOpen(true);
+  };
+
+  const handleSendReceiptEmail = async () => {
+    const donor = activeReceiptData?.donor;
+    const donation = activeReceiptData?.donation;
+    const element = receiptCaptureRef.current;
+
+    if (!donor?.email || !donation || !selectedOrg) {
+      setEmailSendError('Donor email address is required.');
+      return;
+    }
+    if (!element) {
+      setEmailSendError('Receipt is still loading. Please try again in a moment.');
+      return;
+    }
+
+    setIsEmailSending(true);
+    setEmailSendError(null);
+    setEmailSendSuccess(false);
+
+    try {
+      await sendReceiptEmailToDonor({
+        element,
+        to: donor.email,
+        donorName: donor.name,
+        amount: donation.amount,
+        orgName: selectedOrg.name,
+        orgAddress: selectedOrg.address,
+        receiptNo: `80G-${donation.id.slice(-8).toUpperCase()}`,
+        donationDate: donation.date,
+        paymentMode: donation.paymentMode,
+        pdfFilename: getReceiptFilename(donation.id, donor.name),
+      });
+      setEmailSendSuccess(true);
+    } catch (err) {
+      console.error(err);
+      setEmailSendError(err instanceof Error ? err.message : 'Could not send email.');
+    } finally {
+      setIsEmailSending(false);
+    }
   };
 
   useEffect(() => {
@@ -476,7 +530,14 @@ export default function App() {
                               >
                                 <Eye size={18} />
                               </button>
-                              <button onClick={() => { setActiveReceiptData({ donor: d, donation: dn }); setIsEmailModalOpen(true); }} className="p-3 hover:bg-emerald-50 rounded-xl text-emerald-600"><Mail size={18} /></button>
+                              <button
+                                type="button"
+                                onClick={() => openEmailModal(d, dn)}
+                                className="p-3 hover:bg-emerald-50 rounded-xl text-emerald-600"
+                                title="Email receipt to donor"
+                              >
+                                <Mail size={18} />
+                              </button>
                               <button onClick={() => remove('donations', dn.id)} className="p-3 hover:bg-red-50 rounded-xl text-red-400"><Trash2 size={16}/></button>
                             </div>
                           </td>
@@ -663,33 +724,31 @@ export default function App() {
       {isEmailModalOpen && activeReceiptData && selectedOrg && (
         <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-xl z-[70] flex items-center justify-center p-4">
           <div className="bg-white rounded-[3rem] w-full max-w-md shadow-2xl overflow-hidden animate-in slide-in-from-bottom-10">
-            <div className="bg-slate-900 p-12 text-white text-center relative">
-              <button onClick={() => setIsEmailModalOpen(false)} className="absolute top-8 right-8 text-slate-500 hover:text-white transition-colors"><X size={24}/></button>
-              <Mail className="w-16 h-16 text-blue-400 mx-auto mb-6" />
-              <h2 className="text-3xl font-black">Email Receipt</h2>
-              <p className="text-slate-400 font-bold mt-2 text-sm">{activeReceiptData.donor?.email || 'N/A'}</p>
+            <div className="bg-slate-900 p-10 text-white text-center relative">
+              <button type="button" onClick={() => setIsEmailModalOpen(false)} className="absolute top-6 right-6 text-slate-500 hover:text-white transition-colors"><X size={24} /></button>
+              <img src="/lata-agrawal-foundation-logo.png" alt="Lata Agrawal Foundation" className="h-16 w-16 object-contain mx-auto mb-4 rounded-lg bg-[#f7f4ed] p-1" />
+              <h2 className="text-2xl font-black">Email Receipt to Donor</h2>
+              <p className="text-slate-400 font-medium mt-2 text-sm">{activeReceiptData.donor?.name || 'Donor'}</p>
+              <p className="text-blue-300 font-mono text-xs mt-1">{activeReceiptData.donor?.email || 'No email on file'}</p>
             </div>
-            <div className="p-10 space-y-8">
-              <div className="bg-blue-50 p-6 rounded-3xl border border-blue-100 flex gap-4 text-blue-800 text-[11px] font-medium leading-relaxed">
-                <Info size={24} className="shrink-0 text-blue-600" />
-                <div>
-                  <strong>Steps to Send:</strong>
-                  <ol className="list-decimal ml-4 mt-2">
-                    <li>Open the receipt and save it as a PDF.</li>
-                    <li>Click below to draft the email automatically.</li>
-                    <li>Attach the PDF manually in your mail app.</li>
-                  </ol>
+            <div className="p-8 space-y-6">
+              {emailSendSuccess ? (
+                <div className="bg-emerald-50 border border-emerald-200 text-emerald-800 p-5 rounded-2xl text-center text-sm font-medium">
+                  Receipt sent successfully to {activeReceiptData.donor?.email}
                 </div>
-              </div>
-              <button onClick={() => {
-                if (!activeReceiptData.donor) return;
-                const subject = encodeURIComponent(`80G Receipt - ${selectedOrg.name}`);
-                const body = encodeURIComponent(`Dear ${activeReceiptData.donor.name},\n\nThank you for your generous contribution of ₹${activeReceiptData.donation.amount.toLocaleString('en-IN')}.\n\nPlease find attached your 80G tax certificate.\n\nWarm regards,\n${selectedOrg.name}`);
-                const mailtoUrl = `mailto:${activeReceiptData.donor.email}?subject=${subject}&body=${body}`;
-                window.open(mailtoUrl, '_blank');
-              }} className="w-full bg-blue-600 text-white py-5 rounded-3xl font-black text-xl hover:bg-blue-700 shadow-2xl flex items-center justify-center gap-3">
-                <ExternalLink size={22} /> Create Email Draft
-              </button>
+              ) : (
+                <>
+                  <div className="bg-slate-50 p-5 rounded-2xl border border-slate-100 text-slate-600 text-sm leading-relaxed">
+                    <p>Sends a thank-you email with the <strong>80G certificate PDF</strong> attached.</p>
+                    <p className="mt-3 text-xs text-slate-400">Amount: ₹{activeReceiptData.donation.amount.toLocaleString('en-IN')} · {selectedOrg.name}</p>
+                  </div>
+                  {emailSendError && <p className="bg-red-50 border border-red-200 text-red-700 p-4 rounded-2xl text-xs font-medium">{emailSendError}</p>}
+                  <button type="button" disabled={isEmailSending || !activeReceiptData.donor?.email} onClick={() => void handleSendReceiptEmail()} className="w-full bg-emerald-600 text-white py-4 rounded-2xl font-black text-lg hover:bg-emerald-700 shadow-xl flex items-center justify-center gap-3 disabled:opacity-50">
+                    <Mail size={22} /> {isEmailSending ? 'Sending…' : 'Send receipt with PDF'}
+                  </button>
+                </>
+              )}
+              <button type="button" onClick={() => setIsEmailModalOpen(false)} className="w-full py-3 text-slate-400 font-bold text-sm hover:text-slate-600">{emailSendSuccess ? 'Close' : 'Cancel'}</button>
             </div>
           </div>
         </div>

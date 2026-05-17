@@ -23,6 +23,13 @@ const waitForImages = (element: HTMLElement): Promise<void> =>
     )
   ).then(() => undefined);
 
+const escapeHtml = (text: string): string =>
+  text
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;');
+
 export async function receiptElementToPdfBlob(element: HTMLElement): Promise<Blob> {
   await waitForImages(element);
 
@@ -72,14 +79,69 @@ export async function downloadReceiptPdf(element: HTMLElement, filename: string)
   URL.revokeObjectURL(url);
 }
 
-export async function openReceiptPdfInNewTab(element: HTMLElement): Promise<Window | null> {
+export interface OpenReceiptPdfOptions {
+  title?: string;
+}
+
+export async function openReceiptPdfInNewTab(
+  element: HTMLElement,
+  options: OpenReceiptPdfOptions = {}
+): Promise<Window | null> {
   const blob = await receiptElementToPdfBlob(element);
-  const url = URL.createObjectURL(blob);
-  const tab = window.open(url, '_blank', 'noopener,noreferrer');
+  const pdfUrl = URL.createObjectURL(blob);
+  const title = options.title ?? '80G Donation Receipt — Lata Agrawal Foundation';
+  const logoUrl = `${window.location.origin}/lata-agrawal-foundation-logo.png`;
+  const safeTitle = escapeHtml(title);
+
+  const html = `<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>${safeTitle}</title>
+  <link rel="icon" type="image/png" href="${logoUrl}" />
+  <link rel="apple-touch-icon" href="${logoUrl}" />
+  <style>
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, -apple-system, sans-serif; background: #f1f5f9; }
+    header {
+      display: flex; align-items: center; gap: 12px;
+      padding: 10px 16px; background: #1a2744; color: #fff;
+    }
+    header img {
+      height: 36px; width: 36px; object-fit: contain;
+      border-radius: 6px; background: #f7f4ed; padding: 2px;
+    }
+    header h1 { margin: 0; font-size: 14px; font-weight: 600; letter-spacing: 0.02em; }
+    iframe { display: block; width: 100%; height: calc(100vh - 52px); border: 0; background: #fff; }
+  </style>
+</head>
+<body>
+  <header>
+    <img src="${logoUrl}" alt="Lata Agrawal Foundation" />
+    <h1>${safeTitle}</h1>
+  </header>
+  <iframe src="${pdfUrl}" title="${safeTitle}"></iframe>
+</body>
+</html>`;
+
+  const htmlBlob = new Blob([html], { type: 'text/html' });
+  const htmlUrl = URL.createObjectURL(htmlBlob);
+  const tab = window.open(htmlUrl, '_blank', 'noopener,noreferrer');
+
   if (!tab) {
-    URL.revokeObjectURL(url);
+    URL.revokeObjectURL(pdfUrl);
+    URL.revokeObjectURL(htmlUrl);
     throw new Error('Popup blocked. Please allow pop-ups for this site.');
   }
-  tab.addEventListener('beforeunload', () => URL.revokeObjectURL(url));
+
+  const cleanup = () => {
+    URL.revokeObjectURL(pdfUrl);
+    URL.revokeObjectURL(htmlUrl);
+  };
+
+  tab.addEventListener('beforeunload', cleanup);
+  setTimeout(cleanup, 120_000);
+
   return tab;
 }
