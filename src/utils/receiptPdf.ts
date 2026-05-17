@@ -30,11 +30,25 @@ const escapeHtml = (text: string): string =>
     .replace(/>/g, '&gt;')
     .replace(/"/g, '&quot;');
 
-export async function receiptElementToPdfBlob(element: HTMLElement): Promise<Blob> {
+export interface ReceiptPdfOptions {
+  /** Lower scale = smaller file (use 1 for email). Default 2 for downloads. */
+  scale?: number;
+  /** JPEG quality 0–1 when using compact mode. Default 0.9 */
+  jpegQuality?: number;
+}
+
+export async function receiptElementToPdfBlob(
+  element: HTMLElement,
+  options: ReceiptPdfOptions = {}
+): Promise<Blob> {
+  const scale = options.scale ?? 2;
+  const jpegQuality = options.jpegQuality ?? 0.9;
+  const useCompact = scale <= 1;
+
   await waitForImages(element);
 
   const canvas = await html2canvas(element, {
-    scale: 2,
+    scale,
     useCORS: true,
     backgroundColor: '#ffffff',
     logging: false,
@@ -44,7 +58,10 @@ export async function receiptElementToPdfBlob(element: HTMLElement): Promise<Blo
     windowHeight: RECEIPT_HEIGHT_PX,
   });
 
-  const imgData = canvas.toDataURL('image/png');
+  const imgData = useCompact
+    ? canvas.toDataURL('image/jpeg', jpegQuality)
+    : canvas.toDataURL('image/png');
+  const imageFormat = useCompact ? 'JPEG' : 'PNG';
   const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
 
   const pageWidth = pdf.internal.pageSize.getWidth();
@@ -64,7 +81,7 @@ export async function receiptElementToPdfBlob(element: HTMLElement): Promise<Blo
   const x = (pageWidth - imgWidth) / 2;
   const y = (pageHeight - imgHeight) / 2;
 
-  pdf.addImage(imgData, 'PNG', x, y, imgWidth, imgHeight);
+  pdf.addImage(imgData, imageFormat, x, y, imgWidth, imgHeight);
 
   return pdf.output('blob');
 }

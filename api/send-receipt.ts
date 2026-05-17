@@ -1,7 +1,15 @@
 import type { VercelRequest, VercelResponse } from '@vercel/node';
+import formidable from 'formidable';
 import nodemailer from 'nodemailer';
+import fs from 'fs';
 
-interface SendReceiptBody {
+export const config = {
+  api: {
+    bodyParser: false,
+  },
+};
+
+interface ReceiptEmailFields {
   to: string;
   donorName: string;
   amount: number;
@@ -10,11 +18,10 @@ interface SendReceiptBody {
   receiptNo: string;
   donationDate: string;
   paymentMode: string;
-  pdfBase64: string;
   pdfFilename: string;
 }
 
-function buildThankYouHtml(data: SendReceiptBody): string {
+function buildThankYouHtml(data: ReceiptEmailFields): string {
   const amount = data.amount.toLocaleString('en-IN');
   const addressBlock = data.orgAddress
     ? `<p style="font-size: 12px; color: #64748b; margin-top: 16px;">${data.orgAddress}</p>`
@@ -48,7 +55,55 @@ function buildThankYouHtml(data: SendReceiptBody): string {
     '</p>',
     '</body>',
     '</html>',
-  ].join('');
+  ]
+    .join('')
+    .replace(/<\/?motion/g, (tag) => tag.replace('motion', 'div'));
+}
+
+function fieldValue(fields: formidable.Fields, name: string): string {
+  const raw = fields[name];
+  if (Array.isArray(raw)) return String(raw[0] ?? '');
+  return raw ? String(raw) : '';
+}
+
+async function parseMultipartRequest(req: VercelRequest): Promise<{
+  fields: ReceiptEmailFields;
+  pdfBuffer: Buffer;
+}> {
+  const form = formidable({
+    maxFileSize: 8 * 1024 * 1024,
+    maxFields: 20,
+  });
+
+  const [fields, files] = await form.parse(req);
+  const pdfFile = files.pdf?.[0];
+
+  if (!pdfFile?.filepath) {
+    throw new Error('PDF attachment is missing');
+  }
+
+  const pdfBuffer = fs.readFileSync(pdfFile.filepath);
+  fs.unlink(pdfFile.filepath, () => undefined);
+
+  const amount = Number(fieldValue(fields, 'amount'));
+  if (!fieldValue(fields, 'to') || !fieldValue(fields, 'donorName') || Number.isNaN(amount)) {
+    throw new Error('Missing required fields');
+  }
+
+  return {
+    fields: {
+      to: fieldValue(fields, 'to'),
+      donorName: fieldValue(fields, 'donorName'),
+      amount,
+      orgName: fieldValue(fields, 'orgName'),
+      orgAddress: fieldValue(fields, 'orgAddress') || undefined,
+      receiptNo: fieldValue(fields, 'receiptNo'),
+      donationDate: fieldValue(fields, 'donationDate'),
+      paymentMode: fieldValue(fields, 'paymentMode'),
+      pdfFilename: fieldValue(fields, 'pdfFilename') || '80G-Receipt.pdf',
+    },
+    pdfBuffer,
+  };
 }
 
 export default async function handler(req: VercelRequest, res: VercelResponse) {
@@ -56,8 +111,8 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(405).json({ error: 'Method not allowed' });
   }
 
-  const gmailUser = process.env.GMAIL_USER;
-  const gmailPass = process.env.GMAIL_APP_PASSWORD;
+  const gmailUser = process.env.GMAIL_USER?.trim();
+  const gmailPass = process.env.GMAIL_APP_PASSWORD?.replace(/\s/g, '');
 
   if (!gmailUser || !gmailPass) {
     return res.status(503).json({
@@ -66,45 +121,40 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     });
   }
 
-  const body = req.body as SendReceiptBody;
-  if (!body?.to || !body?.pdfBase64 || !body?.donorName) {
-    return res.status(400).json({ error: 'Missing required fields' });
-  }
-
   try {
+    const { fields, pdfBuffer } = await parseMultipartRequest(req);
+    const amount = fields.amount.toLocaleString('en-IN');
+    const html = buildThankYouHtml(fields);
+
     const transporter = nodemailer.createTransport({
       service: 'gmail',
       auth: { user: gmailUser, pass: gmailPass },
     });
 
-    const pdfBuffer = Buffer.from(body.pdfBase64, 'base64');
-    const amount = body.amount.toLocaleString('en-IN');
-    const html = buildThankYouHtml(body);
-
     await transporter.sendMail({
-      from: `"${body.orgName}" <${gmailUser}>`,
-      to: body.to,
+      from: `"${fields.orgName}" <${gmailUser}>`,
+      to: fields.to,
       replyTo: gmailUser,
-      subject: `Thank you for your donation — 80G Receipt | ${body.orgName}`,
+      subject: `Thank you for your donation — 80G Receipt | ${fields.orgName}`,
       html,
       text: [
-        `Dear ${body.donorName},`,
+        `Dear ${fields.donorName},`,
         '',
-        `Thank you for your generous donation of ₹${amount} to ${body.orgName}.`,
+        `Thank you for your generous donation of ₹${amount} to ${fields.orgName}.`,
         '',
         'Your Section 80G donation receipt is attached to this email. Please retain it for your tax records.',
         '',
-        `Receipt No: ${body.receiptNo}`,
-        `Date: ${body.donationDate}`,
+        `Receipt No: ${fields.receiptNo}`,
+        `Date: ${fields.donationDate}`,
         `Amount: ₹${amount}`,
-        `Payment: ${body.paymentMode}`,
+        `Payment: ${fields.paymentMode}`,
         '',
-        `With warm regards,`,
-        body.orgName,
+        'With warm regards,',
+        fields.orgName,
       ].join('\n'),
       attachments: [
         {
-          filename: body.pdfFilename || '80G-Receipt.pdf',
+          filename: fields.pdfFilename,
           content: pdfBuffer,
           contentType: 'application/pdf',
         },
@@ -114,8 +164,10 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(200).json({ success: true });
   } catch (err) {
     console.error('Send receipt email error:', err);
-    return res.status(500).json({
-      error: err instanceof Error ? err.message : 'Failed to send email',
-    });
+    const message = err instanceof Error ? err.message : 'Failed to send email';
+    if (message.includes('too large') || message.includes('maxFileSize')) {
+      return res.status(413).json({ error: 'Receipt PDF is too large to send.' });
+    }
+    return res.status(500).json({ error: message });
   }
 }
