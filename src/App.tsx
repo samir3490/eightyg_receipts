@@ -303,7 +303,7 @@ export default function App() {
       {activeReceiptData && selectedOrg && (
         <div
           aria-hidden="true"
-          className="pointer-events-none fixed left-[-10000px] top-0 w-[794px] opacity-0"
+          className="pointer-events-none fixed left-[-10000px] top-0 opacity-0"
         >
           <div ref={receiptCaptureRef} id="receipt-capture">
             <ReceiptCertificate
@@ -531,7 +531,7 @@ export default function App() {
                 <X size={24} />
               </button>
             </div>
-            <div className="bg-white rounded-[2.5rem] w-full shadow-2xl animate-in zoom-in-95 overflow-hidden">
+            <div className="bg-white rounded-2xl shadow-2xl animate-in zoom-in-95 overflow-x-auto max-w-full">
               <ReceiptCertificate
                 org={selectedOrg}
                 donor={activeReceiptData.donor}

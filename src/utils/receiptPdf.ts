@@ -1,5 +1,6 @@
 import html2canvas from 'html2canvas';
 import { jsPDF } from 'jspdf';
+import { RECEIPT_HEIGHT_PX, RECEIPT_WIDTH_PX } from '../components/ReceiptCertificate';
 
 export function getReceiptFilename(receiptId: string, donorName?: string): string {
   const id = receiptId.slice(-8).toUpperCase();
@@ -13,27 +14,33 @@ export async function receiptElementToPdfBlob(element: HTMLElement): Promise<Blo
     useCORS: true,
     backgroundColor: '#ffffff',
     logging: false,
+    width: RECEIPT_WIDTH_PX,
+    height: RECEIPT_HEIGHT_PX,
+    windowWidth: RECEIPT_WIDTH_PX,
+    windowHeight: RECEIPT_HEIGHT_PX,
   });
 
   const imgData = canvas.toDataURL('image/png');
-  const pdf = new jsPDF({ orientation: 'portrait', unit: 'mm', format: 'a4' });
+  const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
+
   const pageWidth = pdf.internal.pageSize.getWidth();
   const pageHeight = pdf.internal.pageSize.getHeight();
-  const imgWidth = pageWidth;
-  const imgHeight = (canvas.height * imgWidth) / canvas.width;
+  const margin = 6;
+  const maxWidth = pageWidth - margin * 2;
+  const maxHeight = pageHeight - margin * 2;
 
-  let heightLeft = imgHeight;
-  let position = 0;
+  let imgWidth = maxWidth;
+  let imgHeight = (canvas.height * imgWidth) / canvas.width;
 
-  pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
-  heightLeft -= pageHeight;
-
-  while (heightLeft > 0) {
-    position = heightLeft - imgHeight;
-    pdf.addPage();
-    pdf.addImage(imgData, 'PNG', 0, position, imgWidth, imgHeight);
-    heightLeft -= pageHeight;
+  if (imgHeight > maxHeight) {
+    imgHeight = maxHeight;
+    imgWidth = (canvas.width * imgHeight) / canvas.height;
   }
+
+  const x = (pageWidth - imgWidth) / 2;
+  const y = (pageHeight - imgHeight) / 2;
+
+  pdf.addImage(imgData, 'PNG', x, y, imgWidth, imgHeight);
 
   return pdf.output('blob');
 }

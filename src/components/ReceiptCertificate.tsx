@@ -1,4 +1,4 @@
-﻿import { numberToWords } from '../utils/numberToWords';
+import { numberToWords } from '../utils/numberToWords';
 
 export interface ReceiptOrg {
   name: string;
@@ -28,64 +28,147 @@ interface ReceiptCertificateProps {
   className?: string;
 }
 
+const formatReceiptDate = (dateStr: string): string => {
+  const parsed = new Date(dateStr);
+  if (Number.isNaN(parsed.getTime())) return dateStr;
+  return parsed.toLocaleDateString('en-IN', {
+    day: 'numeric',
+    month: 'long',
+    year: 'numeric',
+  });
+};
+
+/** A4 landscape proportions — fixed size so PDF export fits one page */
+export const RECEIPT_WIDTH_PX = 1050;
+export const RECEIPT_HEIGHT_PX = 742;
+
 export function ReceiptCertificate({ org, donor, donation, className = '' }: ReceiptCertificateProps) {
+  const receiptNo = `80G-${donation.id.slice(-8).toUpperCase()}`;
+  const formattedDate = formatReceiptDate(donation.date);
+  const amountFormatted = donation.amount.toLocaleString('en-IN');
+
   return (
-    <div className={`p-8 md:p-16 text-slate-900 font-serif bg-white ${className}`}>
-      <div className="border-[8px] border-slate-900 p-8 md:p-12 relative">
-        <div className="text-center mb-12 md:mb-16">
-          <h2 className="text-3xl md:text-5xl font-black uppercase tracking-tighter mb-4">{org.name}</h2>
-          <p className="text-sm italic text-slate-500 mb-8 max-w-lg mx-auto leading-relaxed">{org.address}</p>
-          <div className="flex flex-wrap justify-center gap-6 md:gap-12 text-[10px] font-black border-y-4 border-slate-900 py-5 uppercase tracking-[0.3em]">
-            <span>PAN: {org.pan}</span>
-            <span>80G REG: {org.regNo}</span>
-          </div>
-        </div>
-        <div className="flex flex-col sm:flex-row justify-between items-start gap-4 mb-12 md:mb-16 font-sans">
-          <div className="bg-slate-900 text-white px-6 md:px-10 py-4 font-black tracking-widest uppercase text-xs">
-            Donation Receipt
-          </div>
-          <div className="text-right">
-            <p className="text-[10px] uppercase font-black text-slate-300">
-              Receipt ID: <span className="text-slate-900 font-mono">80G-{donation.id.slice(-8).toUpperCase()}</span>
+    <div
+      className={`relative box-border overflow-hidden bg-white font-sans text-slate-800 ${className}`}
+      style={{ width: RECEIPT_WIDTH_PX, height: RECEIPT_HEIGHT_PX, minWidth: RECEIPT_WIDTH_PX, minHeight: RECEIPT_HEIGHT_PX }}
+    >
+      {/* Accent edge */}
+      <div className="absolute left-0 top-0 bottom-0 w-1 bg-gradient-to-b from-blue-600 via-blue-700 to-slate-800" />
+
+      {/* Subtle corner mark */}
+      <div className="absolute top-0 right-0 w-32 h-32 bg-gradient-to-bl from-slate-50 to-transparent pointer-events-none" />
+
+      <div className="relative h-full flex flex-col pl-8 pr-10 py-8">
+        {/* Header */}
+        <div className="flex justify-between items-start gap-8 pb-5 border-b border-slate-200">
+          <div className="min-w-0 flex-1">
+            <p className="text-[10px] font-semibold uppercase tracking-[0.25em] text-blue-700 mb-1.5">
+              Tax Exemption Certificate
             </p>
-            <p className="text-[10px] uppercase font-black text-slate-300 mt-2">
-              Date: <span className="text-slate-900 font-bold">{donation.date}</span>
+            <h1 className="text-[22px] font-semibold leading-tight text-slate-900 tracking-tight">
+              {org.name}
+            </h1>
+            <p className="text-[11px] text-slate-500 mt-1.5 leading-snug max-w-lg">{org.address}</p>
+            <div className="flex flex-wrap gap-x-6 gap-y-1 mt-3 text-[10px] text-slate-600">
+              <span>
+                <span className="uppercase tracking-wide text-slate-400">PAN </span>
+                <span className="font-mono font-medium text-slate-800">{org.pan}</span>
+              </span>
+              <span>
+                <span className="uppercase tracking-wide text-slate-400">80G Registration </span>
+                <span className="font-medium text-slate-800">{org.regNo}</span>
+              </span>
+            </div>
+          </div>
+          <div className="shrink-0 text-right bg-slate-50 rounded-lg px-4 py-3 border border-slate-100">
+            <p className="text-[9px] uppercase tracking-widest text-slate-400 font-medium">Receipt No.</p>
+            <p className="font-mono text-sm font-semibold text-slate-900 mt-0.5">{receiptNo}</p>
+            <p className="text-[9px] uppercase tracking-widest text-slate-400 font-medium mt-2.5">Date</p>
+            <p className="text-sm font-semibold text-slate-900 mt-0.5">{formattedDate}</p>
+          </div>
+        </div>
+
+        {/* Title */}
+        <div className="py-4">
+          <span className="inline-flex items-center gap-2 bg-slate-900 text-white text-[10px] font-semibold uppercase tracking-[0.18em] px-4 py-2 rounded-md">
+            <span className="w-1.5 h-1.5 rounded-full bg-blue-400" />
+            Donation Receipt under Section 80G
+          </span>
+        </div>
+
+        {/* Body — two columns */}
+        <div className="flex-1 grid grid-cols-12 gap-8 min-h-0">
+          <div className="col-span-7 flex flex-col justify-center space-y-4 text-[13px] leading-relaxed text-slate-700">
+            <p>
+              This is to certify that we have received a voluntary donation with thanks from
+            </p>
+            <div className="border-l-2 border-blue-600 pl-4 py-1">
+              <p className="text-lg font-semibold text-slate-900">{donor?.name || 'Unknown Donor'}</p>
+              <p className="text-[11px] mt-1 text-slate-500">
+                PAN{' '}
+                <span className="font-mono font-semibold text-slate-800">{donor?.pan || 'N/A'}</span>
+              </p>
+            </div>
+            <p>
+              The donation is eligible for deduction under Section 80G of the Income Tax Act, 1961,
+              subject to applicable limits and conditions.
+            </p>
+            <p className="text-[12px] text-slate-600">
+              <span className="text-slate-500">Payment mode:</span>{' '}
+              <span className="font-medium text-slate-800">{donation.paymentMode}</span>
+              {donation.refNo && (
+                <span className="text-slate-400">
+                  {' '}
+                  · Ref. <span className="font-mono">{donation.refNo}</span>
+                </span>
+              )}
             </p>
           </div>
-        </div>
-        <div className="space-y-8 md:space-y-10 text-lg md:text-2xl leading-[1.6] mb-16 md:mb-20 text-slate-800">
-          <p>
-            Received with thanks from <strong>{donor?.name || 'Unknown'}</strong> (PAN:{' '}
-            <span className="font-mono font-black">{donor?.pan || 'N/A'}</span>)
-          </p>
-          <p>
-            A sum of <strong>INR {donation.amount.toLocaleString('en-IN')}/-</strong>
-          </p>
-          <div className="bg-slate-50 p-6 rounded-2xl border-l-8 border-slate-900 font-sans">
-            <p className="text-xs font-black text-slate-400 uppercase mb-2 tracking-widest">Amount in Words</p>
-            <p className="font-black text-xl md:text-2xl uppercase">{numberToWords(donation.amount)}</p>
+
+          <div className="col-span-5 flex flex-col justify-center gap-4">
+            <div className="rounded-xl border border-slate-200 bg-gradient-to-br from-slate-50 to-white p-5 shadow-sm">
+              <p className="text-[9px] uppercase tracking-widest text-slate-400 font-medium">Amount Received</p>
+              <p className="text-3xl font-semibold text-slate-900 mt-1 tracking-tight">
+                ₹{amountFormatted}
+                <span className="text-lg text-slate-400 font-normal"> /-</span>
+              </p>
+              <div className="mt-4 pt-4 border-t border-slate-200">
+                <p className="text-[9px] uppercase tracking-widest text-slate-400 font-medium mb-1">
+                  In Words
+                </p>
+                <p className="text-[12px] font-medium text-slate-800 leading-snug uppercase">
+                  {numberToWords(donation.amount)}
+                </p>
+              </div>
+            </div>
           </div>
-          <p>
-            Via <strong>{donation.paymentMode}</strong>
-            {donation.refNo && <span className="text-slate-400"> (Ref: {donation.refNo})</span>}.
-          </p>
         </div>
-        <div className="flex flex-col sm:flex-row justify-between items-end gap-8 font-sans">
-          <div className="text-[10px] text-slate-300 font-bold uppercase tracking-widest max-w-xs leading-relaxed">
-            Generated electronically. This certificate is valid for tax exemption under IT Act. Hash:{' '}
-            {donation.id.slice(0, 16)}
+
+        {/* Footer */}
+        <div className="flex justify-between items-end gap-8 pt-4 border-t border-slate-100">
+          <div className="max-w-md">
+            <p className="text-[9px] text-slate-400 leading-relaxed">
+              This is a computer-generated receipt. Exemption under Section 80G is subject to the
+              provisions of the Income Tax Act and rules framed thereunder. Document ID:{' '}
+              <span className="font-mono text-slate-500">{donation.id.slice(0, 12)}</span>
+            </p>
           </div>
-          <div className="text-right">
-            <p className="text-sm font-black mb-4">For {org.name}</p>
-            {org.signatureBase64 && (
+          <div className="text-right shrink-0">
+            <p className="text-[10px] text-slate-500 mb-2">For {org.name}</p>
+            {org.signatureBase64 ? (
               <img
                 src={org.signatureBase64}
-                className="h-16 w-40 object-contain mx-auto mb-2"
-                alt="Signature"
+                className="h-12 w-36 object-contain ml-auto mb-1"
+                alt="Authorized signature"
               />
+            ) : (
+              <div className="h-12 mb-1" />
             )}
-            <div className="h-1 w-48 md:w-64 bg-slate-900 mb-3 ml-auto" />
-            <p className="text-[10px] uppercase font-black tracking-widest">Authorized Signatory</p>
+            <div className="w-44 border-t border-slate-300 ml-auto pt-1.5">
+              <p className="text-[9px] uppercase tracking-widest text-slate-500 font-medium">
+                Authorized Signatory
+              </p>
+            </div>
           </div>
         </div>
       </div>
