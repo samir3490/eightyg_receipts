@@ -4,11 +4,13 @@ import { getAuth, signInAnonymously, onAuthStateChanged, User, Auth } from 'fire
 import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, Firestore, QuerySnapshot, DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
 import { 
   Plus, Building2, UserPlus, Trash2, Edit2, ChevronRight, 
-  FileText, Search, Printer, Mail, X, 
+  FileText, Search, Mail, X, Download, Eye,
   ShieldCheck, ExternalLink, Info, Fingerprint, Lock, 
   LogOut, Users, TrendingUp, Calendar, Image as ImageIcon,
   Database
 } from 'lucide-react';
+import { ReceiptCertificate } from './components/ReceiptCertificate';
+import { downloadReceiptPdf, getReceiptFilename, openReceiptPdfInNewTab } from './utils/receiptPdf';
 
 // --- Interfaces for TypeScript Safety ---
 interface Organization {
@@ -66,40 +68,6 @@ type ViewType = typeof VIEWS[keyof typeof VIEWS];
 
 const PAYMENT_MODES = ['Online Transfer', 'UPI', 'Cheque', 'Cash', 'Other'];
 
-// Helper: Amount in Words (Indian Numbering System)
-const numberToWords = (num: number | string): string => {
-  const a = ['', 'One ', 'Two ', 'Three ', 'Four ', 'Five ', 'Six ', 'Seven ', 'Eight ', 'Nine ', 'Ten ', 'Eleven ', 'Twelve ', 'Thirteen ', 'Fourteen ', 'Fifteen ', 'Sixteen ', 'Seventeen ', 'Eighteen ', 'Nineteen '];
-  const b = ['', '', 'Twenty', 'Thirty', 'Forty', 'Fifty', 'Sixty', 'Seventy', 'Eighty', 'Ninety'];
-  
-  const nStr = num.toString();
-  if (nStr.length > 9) return 'Value too high';
-  
-  const match = ('000000000' + nStr).substr(-9).match(/^(\d{2})(\d{2})(\d{2})(\d{1})(\d{2})$/);
-  if (!match) return ''; 
-  
-  let str = '';
-  // Helper to handle groups (Crore, Lakh, etc)
-  const getPart = (valStr: string) => {
-    const val = parseInt(valStr);
-    if (val === 0) return '';
-    return (a[val] || b[parseInt(valStr[0])] + ' ' + a[parseInt(valStr[1])]);
-  };
-
-  const crore = getPart(match[1]);
-  const lakh = getPart(match[2]);
-  const thousand = getPart(match[3]);
-  const hundred = a[parseInt(match[4])];
-  const tens = getPart(match[5]);
-
-  if (crore) str += crore + 'Crore ';
-  if (lakh) str += lakh + 'Lakh ';
-  if (thousand) str += thousand + 'Thousand ';
-  if (hundred) str += hundred + 'Hundred ';
-  if (tens) str += (str !== '' ? 'and ' : '') + tens;
-  
-  return str.trim() + ' Only';
-};
-
 export default function App() {
   const [user, setUser] = useState<User | null>(null);
   const [isAuthorized, setIsAuthorized] = useState<boolean>(localStorage.getItem('isAuthorized_80G') === 'true');
@@ -121,6 +89,8 @@ export default function App() {
   const [isEmailModalOpen, setIsEmailModalOpen] = useState<boolean>(false);
   const [editingItem, setEditingItem] = useState<any>(null);
   const [activeReceiptData, setActiveReceiptData] = useState<ReceiptData | null>(null);
+  const [isPdfGenerating, setIsPdfGenerating] = useState<boolean>(false);
+  const [pendingPdfAction, setPendingPdfAction] = useState<'download' | 'open' | null>(null);
   
   // Filter States
   const [searchTerm, setSearchTerm] = useState<string>('');
@@ -128,6 +98,55 @@ export default function App() {
   const [endDate, setEndDate] = useState<string>('');
 
   const firebaseRefs = useRef<{ auth: Auth | null; db: Firestore | null }>({ auth: null, db: null });
+  const receiptCaptureRef = useRef<HTMLDivElement>(null);
+
+  const getReceiptFilenameForActive = () => {
+    if (!activeReceiptData) return '80G-Receipt.pdf';
+    return getReceiptFilename(
+      activeReceiptData.donation.id,
+      activeReceiptData.donor?.name
+    );
+  };
+
+  const runReceiptPdfAction = async (
+    action: 'download' | 'open'
+  ) => {
+    const element = receiptCaptureRef.current;
+    if (!element || !activeReceiptData || !selectedOrg) return;
+
+    setIsPdfGenerating(true);
+    try {
+      const filename = getReceiptFilenameForActive();
+      if (action === 'download') {
+        await downloadReceiptPdf(element, filename);
+      } else {
+        await openReceiptPdfInNewTab(element);
+      }
+    } catch (err) {
+      console.error(err);
+      alert(err instanceof Error ? err.message : 'Could not generate the receipt PDF. Please try again.');
+    } finally {
+      setIsPdfGenerating(false);
+    }
+  };
+
+  const openReceiptPreview = (donor: Donor | undefined, donation: Donation) => {
+    setActiveReceiptData({ donor, donation });
+    setIsReceiptModalOpen(true);
+  };
+
+  const downloadReceiptFromLedger = (donor: Donor | undefined, donation: Donation) => {
+    setActiveReceiptData({ donor, donation });
+    setIsReceiptModalOpen(false);
+    setPendingPdfAction('download');
+  };
+
+  useEffect(() => {
+    if (!pendingPdfAction || !activeReceiptData || !selectedOrg || !receiptCaptureRef.current) return;
+    const action = pendingPdfAction;
+    setPendingPdfAction(null);
+    void runReceiptPdfAction(action);
+  }, [pendingPdfAction, activeReceiptData, selectedOrg]);
 
   // --- 1. Firebase Initialization ---
   useEffect(() => {
@@ -281,16 +300,23 @@ export default function App() {
 
   return (
     <div className="min-h-screen bg-slate-50 text-slate-900 font-sans flex flex-col">
-      <style>{`
-        @media print {
-          body * { visibility: hidden; }
-          #printable-receipt, #printable-receipt * { visibility: visible; }
-          #printable-receipt { position: absolute; left: 0; top: 0; width: 100%; padding: 0; margin: 0; }
-        }
-      `}</style>
+      {activeReceiptData && selectedOrg && (
+        <div
+          aria-hidden="true"
+          className="pointer-events-none fixed left-[-10000px] top-0 w-[794px] opacity-0"
+        >
+          <div ref={receiptCaptureRef} id="receipt-capture">
+            <ReceiptCertificate
+              org={selectedOrg}
+              donor={activeReceiptData.donor}
+              donation={activeReceiptData.donation}
+            />
+          </div>
+        </div>
+      )}
 
       {/* Header */}
-      <nav className="bg-white border-b border-slate-200 px-6 py-4 sticky top-0 z-20 print:hidden">
+      <nav className="bg-white border-b border-slate-200 px-6 py-4 sticky top-0 z-20">
         <div className="max-w-7xl mx-auto flex justify-between items-center">
           <div className="flex items-center space-x-3 cursor-pointer" onClick={() => { setCurrentView(VIEWS.DASHBOARD); setSelectedOrg(null); }}>
             <div className="bg-blue-600 p-2 rounded-xl shadow-lg"><FileText className="text-white w-5 h-5" /></div>
@@ -434,7 +460,22 @@ export default function App() {
                           </td>
                           <td className="px-10 py-8">
                             <div className="flex justify-center gap-3">
-                              <button onClick={() => { setActiveReceiptData({ donor: d, donation: dn }); setIsReceiptModalOpen(true); }} className="px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-black flex items-center gap-2 hover:bg-blue-600 transition-colors"><Printer size={14} /> Download</button>
+                              <button
+                                type="button"
+                                disabled={isPdfGenerating}
+                                onClick={() => downloadReceiptFromLedger(d, dn)}
+                                className="px-4 py-2 bg-slate-900 text-white rounded-xl text-xs font-black flex items-center gap-2 hover:bg-blue-600 transition-colors disabled:opacity-60"
+                              >
+                                <Download size={14} /> {isPdfGenerating ? 'Saving…' : 'Download'}
+                              </button>
+                              <button
+                                type="button"
+                                onClick={() => openReceiptPreview(d, dn)}
+                                className="p-3 hover:bg-slate-100 rounded-xl text-slate-600"
+                                title="Preview receipt"
+                              >
+                                <Eye size={18} />
+                              </button>
                               <button onClick={() => { setActiveReceiptData({ donor: d, donation: dn }); setIsEmailModalOpen(true); }} className="p-3 hover:bg-emerald-50 rounded-xl text-emerald-600"><Mail size={18} /></button>
                               <button onClick={() => remove('donations', dn.id)} className="p-3 hover:bg-red-50 rounded-xl text-red-400"><Trash2 size={16}/></button>
                             </div>
@@ -459,48 +500,43 @@ export default function App() {
 
       {/* MODALS */}
       {isReceiptModalOpen && activeReceiptData && selectedOrg && (
-        <div className="fixed inset-0 bg-slate-900/95 backdrop-blur-xl z-[60] flex items-center justify-center p-4 overflow-y-auto print:bg-white print:p-0">
-          <div className="bg-white rounded-[2.5rem] w-full max-w-4xl shadow-2xl relative print:shadow-none print:rounded-none animate-in zoom-in-95">
-            <div className="absolute -top-16 right-0 flex gap-4 print:hidden">
-              <button onClick={() => window.print()} className="bg-white px-8 py-3 rounded-full font-black shadow-2xl flex items-center gap-3 text-slate-900"><Printer size={22} /> Save PDF</button>
-              <button onClick={() => setIsReceiptModalOpen(false)} className="bg-white/10 p-3 rounded-full text-white"><X size={28} /></button>
+        <div
+          className="fixed inset-0 z-[60] bg-slate-900/95 backdrop-blur-xl overflow-y-auto"
+          onClick={() => setIsReceiptModalOpen(false)}
+        >
+          <div className="min-h-full flex flex-col items-center px-4 py-6 md:py-10" onClick={(e) => e.stopPropagation()}>
+            <div className="w-full max-w-4xl flex flex-wrap justify-end gap-2 mb-4 sticky top-2 z-10">
+              <button
+                type="button"
+                disabled={isPdfGenerating}
+                onClick={() => runReceiptPdfAction('download')}
+                className="bg-white px-5 py-2.5 rounded-full font-black shadow-lg flex items-center gap-2 text-slate-900 text-sm hover:bg-slate-100 disabled:opacity-60"
+              >
+                <Download size={18} /> {isPdfGenerating ? 'Generating…' : 'Download PDF'}
+              </button>
+              <button
+                type="button"
+                disabled={isPdfGenerating}
+                onClick={() => runReceiptPdfAction('open')}
+                className="bg-blue-600 text-white px-5 py-2.5 rounded-full font-black shadow-lg flex items-center gap-2 text-sm hover:bg-blue-700 disabled:opacity-60"
+              >
+                <ExternalLink size={18} /> Open in New Tab
+              </button>
+              <button
+                type="button"
+                onClick={() => setIsReceiptModalOpen(false)}
+                className="bg-white/10 p-2.5 rounded-full text-white hover:bg-white/20"
+                aria-label="Close preview"
+              >
+                <X size={24} />
+              </button>
             </div>
-            <div id="printable-receipt" className="p-16 text-slate-900 font-serif bg-white">
-              <div className="border-[8px] border-slate-900 p-12 relative">
-                <div className="text-center mb-16">
-                  <h2 className="text-5xl font-black uppercase tracking-tighter mb-4">{selectedOrg.name}</h2>
-                  <p className="text-sm italic text-slate-500 mb-8 max-w-lg mx-auto leading-relaxed">{selectedOrg.address}</p>
-                  <div className="flex justify-center gap-12 text-[10px] font-black border-y-4 border-slate-900 py-5 uppercase tracking-[0.3em]">
-                    <span>PAN: {selectedOrg.pan}</span>
-                    <span>80G REG: {selectedOrg.regNo}</span>
-                  </div>
-                </div>
-                <div className="flex justify-between items-start mb-16 font-sans">
-                  <div className="bg-slate-900 text-white px-10 py-4 font-black tracking-widest uppercase text-xs">Donation Receipt</div>
-                  <div className="text-right">
-                    <p className="text-[10px] uppercase font-black text-slate-300">Receipt ID: <span className="text-slate-900 font-mono">80G-{activeReceiptData.donation.id.slice(-8).toUpperCase()}</span></p>
-                    <p className="text-[10px] uppercase font-black text-slate-300 mt-2">Date: <span className="text-slate-900 font-bold">{activeReceiptData.donation.date}</span></p>
-                  </div>
-                </div>
-                <div className="space-y-10 text-2xl leading-[1.6] mb-20 text-slate-800">
-                  <p>Received with thanks from <strong>{activeReceiptData.donor?.name || 'Unknown'}</strong> (PAN: <span className="font-mono font-black">{activeReceiptData.donor?.pan || 'N/A'}</span>)</p>
-                  <p>A sum of <strong>INR {activeReceiptData.donation.amount.toLocaleString('en-IN')}/-</strong></p>
-                  <div className="bg-slate-50 p-6 rounded-2xl border-l-8 border-slate-900 font-sans">
-                    <p className="text-xs font-black text-slate-400 uppercase mb-2 tracking-widest">Amount in Words</p>
-                    <p className="font-black text-2xl uppercase">{numberToWords(activeReceiptData.donation.amount)}</p>
-                  </div>
-                  <p>Via <strong>{activeReceiptData.donation.paymentMode}</strong> {activeReceiptData.donation.refNo && <span className="text-slate-400">(Ref: {activeReceiptData.donation.refNo})</span>}.</p>
-                </div>
-                <div className="flex justify-between items-end font-sans">
-                  <div className="text-[10px] text-slate-300 font-bold uppercase tracking-widest max-w-xs leading-relaxed">Generated electronically. This certificate is valid for tax exemption under IT Act. Hash: {activeReceiptData.donation.id.slice(0,16)}</div>
-                  <div className="text-right">
-                    <p className="text-sm font-black mb-4">For {selectedOrg.name}</p>
-                    {selectedOrg.signatureBase64 && <img src={selectedOrg.signatureBase64} className="h-16 w-40 object-contain mx-auto mb-2" alt="Signature" />}
-                    <div className="h-1 w-64 bg-slate-900 mb-3"></div>
-                    <p className="text-[10px] uppercase font-black tracking-widest">Authorized Signatory</p>
-                  </div>
-                </div>
-              </div>
+            <div className="bg-white rounded-[2.5rem] w-full shadow-2xl animate-in zoom-in-95 overflow-hidden">
+              <ReceiptCertificate
+                org={selectedOrg}
+                donor={activeReceiptData.donor}
+                donation={activeReceiptData.donation}
+              />
             </div>
           </div>
         </div>
