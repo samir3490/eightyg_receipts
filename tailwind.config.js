@@ -4,7 +4,15 @@ import tailwindcssAnimate from 'tailwindcss-animate'
 export default {
   content: ['./index.html', './src/**/*.{js,ts,jsx,tsx}'],
   theme: {
-    extend: {},
+    extend: {
+      colors: {
+        brand: {
+          navy: '#1a2744',
+          gold: '#c9a227',
+          cream: '#f7f4ed',
+        },
+      },
+    },
   },
   plugins: [tailwindcssAnimate],
 }
