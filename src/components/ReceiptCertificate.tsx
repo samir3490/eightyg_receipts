@@ -1,4 +1,5 @@
-import { numberToWords } from '../utils/numberToWords';
+﻿import { numberToWords } from '../utils/numberToWords';
+import { formatDateDDMMYYYY } from '../utils/format';
 
 export interface ReceiptOrg {
   name: string;
@@ -34,23 +35,13 @@ const BRAND_NAVY = '#1a2744';
 const BRAND_GOLD = '#c9a227';
 const BRAND_CREAM = '#f7f4ed';
 
-const formatReceiptDate = (dateStr: string): string => {
-  const parsed = new Date(dateStr);
-  if (Number.isNaN(parsed.getTime())) return dateStr;
-  return parsed.toLocaleDateString('en-IN', {
-    day: 'numeric',
-    month: 'long',
-    year: 'numeric',
-  });
-};
-
 /** A4 landscape proportions — fixed size so PDF export fits one page */
 export const RECEIPT_WIDTH_PX = 1050;
 export const RECEIPT_HEIGHT_PX = 742;
 
 export function ReceiptCertificate({ org, donor, donation, className = '' }: ReceiptCertificateProps) {
   const receiptNo = `80G-${donation.id.slice(-8).toUpperCase()}`;
-  const formattedDate = formatReceiptDate(donation.date);
+  const formattedDate = formatDateDDMMYYYY(donation.date);
   const amountFormatted = donation.amount.toLocaleString('en-IN');
 
   return (

@@ -10,10 +10,11 @@ import {
   Database, LayoutDashboard
 } from 'lucide-react';
 import { ReceiptCertificate } from './components/ReceiptCertificate';
+import { DonorSearchSelect } from './components/DonorSearchSelect';
 import { BRAND, APP_STATE_KEY } from './constants/brand';
 import { downloadReceiptPdf, getReceiptFilename, openReceiptPdfInNewTab } from './utils/receiptPdf';
 import { sendReceiptEmailToDonor } from './utils/sendReceiptEmail';
-import { currentFinancialYear, formatSentAt } from './utils/format';
+import { currentFinancialYear, formatDateDDMMYYYY, formatSentAt, todayInputDateValue } from './utils/format';
 
 // --- Interfaces for TypeScript Safety ---
 interface Organization {
@@ -208,7 +209,7 @@ export default function App() {
         orgName: selectedOrg.name,
         orgAddress: selectedOrg.address,
         receiptNo: `80G-${donation.id.slice(-8).toUpperCase()}`,
-        donationDate: donation.date,
+        donationDate: formatDateDDMMYYYY(donation.date),
         paymentMode: donation.paymentMode,
         pdfFilename: getReceiptFilename(donation.id, donor.name),
       });
@@ -362,7 +363,7 @@ export default function App() {
 
   const openDonorModalFromDonation = () => {
     setEditingItem(null);
-    setDonorModalAfterSave((donorId) => {
+    setDonorModalAfterSave(() => (donorId: string) => {
       setDonationDonorId(donorId);
       setIsDonorModalOpen(false);
     });
@@ -668,7 +669,7 @@ export default function App() {
                           <div className="text-[10px] font-mono text-brand-navy">{d?.pan}</div>
                         </td>
                         <td className="px-8 py-6 text-right font-black text-xl">₹{dn.amount.toLocaleString('en-IN')}</td>
-                        <td className="px-8 py-6 text-sm font-bold">{dn.date}</td>
+                        <td className="px-8 py-6 text-sm font-bold">{formatDateDDMMYYYY(dn.date)}</td>
                         <td className="px-8 py-6 text-center">
                           {dn.emailSentAt ? (
                             <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700 bg-emerald-50 px-2 py-1 rounded-lg">
@@ -741,7 +742,7 @@ export default function App() {
                           </td>
                           <td className="px-10 py-8 text-right font-black text-2xl">₹{dn.amount.toLocaleString('en-IN')}</td>
                           <td className="px-10 py-8">
-                            <div className="text-sm font-bold">{dn.date}</div>
+                            <div className="text-sm font-bold">{formatDateDDMMYYYY(dn.date)}</div>
                             <div className="text-[10px] text-slate-400 uppercase font-bold">{dn.paymentMode}</div>
                           </td>
                           <td className="px-10 py-8">
@@ -844,7 +845,7 @@ export default function App() {
       )}
 
       {isDonorModalOpen && (
-        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+        <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-[60] flex items-center justify-center p-4">
           <div className="bg-white rounded-[2.5rem] w-full max-w-xl shadow-2xl animate-in zoom-in-95">
             <form onSubmit={async (e: React.FormEvent<HTMLFormElement>) => {
               e.preventDefault();
@@ -906,19 +907,18 @@ export default function App() {
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Select Donor</label>
                   <div className="flex gap-2">
-                    <select
-                      required
-                      name="donorId"
+                    <DonorSearchSelect
+                      donors={masterDonors}
                       value={donationDonorId}
-                      onChange={(e) => setDonationDonorId(e.target.value)}
-                      className="flex-1 px-6 py-4 border-2 border-slate-100 rounded-2xl font-bold outline-none bg-white focus:border-brand-gold"
-                    >
-                      <option value="">-- Choose Donor --</option>
-                      {masterDonors.map(m => <option key={m.id} value={m.id}>{m.name} ({m.pan})</option>)}
-                    </select>
+                      onChange={setDonationDonorId}
+                    />
                     <button
                       type="button"
-                      onClick={openDonorModalFromDonation}
+                      onClick={(e) => {
+                        e.preventDefault();
+                        e.stopPropagation();
+                        openDonorModalFromDonation();
+                      }}
                       className="px-4 py-4 bg-brand-cream border-2 border-brand-gold/30 rounded-2xl text-brand-navy font-black text-xs hover:bg-brand-gold/20 flex items-center gap-1 shrink-0"
                       title="Add new donor"
                     >
@@ -933,7 +933,7 @@ export default function App() {
                    </div>
                    <div className="space-y-2">
                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Date</label>
-                     <input required type="date" name="date" defaultValue={new Date().toISOString().split('T')[0]} className="w-full px-6 py-4 border-2 border-slate-100 rounded-2xl font-bold outline-none" />
+                     <input required type="date" name="date" defaultValue={todayInputDateValue()} className="w-full px-6 py-4 border-2 border-slate-100 rounded-2xl font-bold outline-none" />
                    </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
