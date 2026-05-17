@@ -14,10 +14,11 @@ export interface SendReceiptEmailParams {
 }
 
 export async function sendReceiptEmailToDonor(params: SendReceiptEmailParams): Promise<void> {
-  // Compact PDF for email — avoids Vercel 4.5MB request limit (413 Payload Too Large)
+  // Full resolution (scale 2) with high-quality JPEG — sharp text, still small enough to email
   const pdfBlob = await receiptElementToPdfBlob(params.element, {
-    scale: 1,
-    jpegQuality: 0.88,
+    scale: 2,
+    useJpeg: true,
+    jpegQuality: 0.97,
   });
 
   const form = new FormData();

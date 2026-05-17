@@ -31,9 +31,11 @@ const escapeHtml = (text: string): string =>
     .replace(/"/g, '&quot;');
 
 export interface ReceiptPdfOptions {
-  /** Lower scale = smaller file (use 1 for email). Default 2 for downloads. */
+  /** Render scale — 2 matches on-screen sharpness. Default 2. */
   scale?: number;
-  /** JPEG quality 0–1 when using compact mode. Default 0.9 */
+  /** Use JPEG in PDF (smaller than PNG; pair with high jpegQuality). */
+  useJpeg?: boolean;
+  /** JPEG quality 0–1 when useJpeg is true. Default 0.92 */
   jpegQuality?: number;
 }
 
@@ -42,8 +44,8 @@ export async function receiptElementToPdfBlob(
   options: ReceiptPdfOptions = {}
 ): Promise<Blob> {
   const scale = options.scale ?? 2;
-  const jpegQuality = options.jpegQuality ?? 0.9;
-  const useCompact = scale <= 1;
+  const jpegQuality = options.jpegQuality ?? 0.92;
+  const useJpeg = options.useJpeg ?? false;
 
   await waitForImages(element);
 
@@ -58,10 +60,10 @@ export async function receiptElementToPdfBlob(
     windowHeight: RECEIPT_HEIGHT_PX,
   });
 
-  const imgData = useCompact
+  const imgData = useJpeg
     ? canvas.toDataURL('image/jpeg', jpegQuality)
     : canvas.toDataURL('image/png');
-  const imageFormat = useCompact ? 'JPEG' : 'PNG';
+  const imageFormat = useJpeg ? 'JPEG' : 'PNG';
   const pdf = new jsPDF({ orientation: 'landscape', unit: 'mm', format: 'a4' });
 
   const pageWidth = pdf.internal.pageSize.getWidth();
