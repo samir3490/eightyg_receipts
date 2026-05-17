@@ -8,7 +8,24 @@ export function getReceiptFilename(receiptId: string, donorName?: string): strin
   return `80G-Receipt-${safeName}-${id}.pdf`;
 }
 
+const waitForImages = (element: HTMLElement): Promise<void> =>
+  Promise.all(
+    Array.from(element.querySelectorAll('img')).map(
+      (img) =>
+        new Promise<void>((resolve) => {
+          if (img.complete && img.naturalWidth > 0) {
+            resolve();
+            return;
+          }
+          img.onload = () => resolve();
+          img.onerror = () => resolve();
+        })
+    )
+  ).then(() => undefined);
+
 export async function receiptElementToPdfBlob(element: HTMLElement): Promise<Blob> {
+  await waitForImages(element);
+
   const canvas = await html2canvas(element, {
     scale: 2,
     useCORS: true,
