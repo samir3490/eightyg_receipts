@@ -121,14 +121,28 @@ export default function App() {
   const receiptCaptureRef = useRef<HTMLDivElement>(null);
   const pendingOrgIdRef = useRef<string | null>(null);
 
+  const scrollToTop = () => {
+    window.scrollTo(0, 0);
+    document.documentElement.scrollTop = 0;
+    document.body.scrollTop = 0;
+  };
+
   const goToDashboard = () => {
     setCurrentView(VIEWS.DASHBOARD);
     setSelectedOrg(null);
+    scrollToTop();
   };
 
   const openLedger = (org: Organization) => {
     setSelectedOrg(org);
     setCurrentView(VIEWS.LEDGER);
+    scrollToTop();
+  };
+
+  const navigateTo = (view: ViewType) => {
+    setCurrentView(view);
+    if (view !== VIEWS.LEDGER) setSelectedOrg(null);
+    scrollToTop();
   };
 
   const getReceiptFilenameForActive = () => {
@@ -234,6 +248,20 @@ export default function App() {
     setPendingPdfAction(null);
     void runReceiptPdfAction(action);
   }, [pendingPdfAction, activeReceiptData, selectedOrg]);
+
+  // Prevent browser from restoring scroll position on navigation/refresh
+  useEffect(() => {
+    if ('scrollRestoration' in history) {
+      history.scrollRestoration = 'manual';
+    }
+  }, []);
+
+  // Always start each view from the top of the page
+  useEffect(() => {
+    if (!isAuthorized) return;
+    scrollToTop();
+    requestAnimationFrame(scrollToTop);
+  }, [currentView, selectedOrg?.id, isAuthorized]);
 
   // Restore view after refresh
   useEffect(() => {
@@ -512,10 +540,10 @@ export default function App() {
             <button onClick={goToDashboard} className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 ${currentView === VIEWS.DASHBOARD ? 'bg-brand-navy text-white' : 'hover:bg-brand-cream text-slate-600'}`}>
               <LayoutDashboard size={16} /> Home
             </button>
-            <button onClick={() => setCurrentView(VIEWS.DONORS)} className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 ${currentView === VIEWS.DONORS ? 'bg-brand-navy text-white' : 'hover:bg-brand-cream text-slate-600'}`}>
+            <button onClick={() => navigateTo(VIEWS.DONORS)} className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 ${currentView === VIEWS.DONORS ? 'bg-brand-navy text-white' : 'hover:bg-brand-cream text-slate-600'}`}>
               <Users size={16} /> Donors
             </button>
-            <button onClick={() => setCurrentView(VIEWS.ALL_RECEIPTS)} className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 ${currentView === VIEWS.ALL_RECEIPTS ? 'bg-brand-navy text-white' : 'hover:bg-brand-cream text-slate-600'}`}>
+            <button onClick={() => navigateTo(VIEWS.ALL_RECEIPTS)} className={`px-3 py-2 rounded-xl text-xs font-black transition-all flex items-center gap-1.5 ${currentView === VIEWS.ALL_RECEIPTS ? 'bg-brand-navy text-white' : 'hover:bg-brand-cream text-slate-600'}`}>
               <FileText size={16} /> Receipts
             </button>
             <div className="h-6 w-px bg-slate-200"></div>
@@ -542,9 +570,9 @@ export default function App() {
             <div className="grid grid-cols-2 lg:grid-cols-4 gap-6">
               {[
                 { label: 'Foundations', val: stats.orgs, icon: Building2, color: 'text-brand-navy', bg: 'bg-brand-cream', onClick: goToDashboard },
-                { label: 'Unique Donors', val: stats.donors, icon: Users, color: 'text-emerald-700', bg: 'bg-emerald-50', onClick: () => setCurrentView(VIEWS.DONORS) },
-                { label: 'Total Receipts', val: stats.donationsCount, icon: FileText, color: 'text-purple-700', bg: 'bg-purple-50', onClick: () => setCurrentView(VIEWS.ALL_RECEIPTS) },
-                { label: 'Collection', val: `₹${stats.totalAmount.toLocaleString('en-IN')}`, icon: TrendingUp, color: 'text-brand-gold', bg: 'bg-amber-50', onClick: () => setCurrentView(VIEWS.ALL_RECEIPTS) },
+                { label: 'Unique Donors', val: stats.donors, icon: Users, color: 'text-emerald-700', bg: 'bg-emerald-50', onClick: () => navigateTo(VIEWS.DONORS) },
+                { label: 'Total Receipts', val: stats.donationsCount, icon: FileText, color: 'text-purple-700', bg: 'bg-purple-50', onClick: () => navigateTo(VIEWS.ALL_RECEIPTS) },
+                { label: 'Collection', val: `₹${stats.totalAmount.toLocaleString('en-IN')}`, icon: TrendingUp, color: 'text-brand-gold', bg: 'bg-amber-50', onClick: () => navigateTo(VIEWS.ALL_RECEIPTS) },
               ].map((s, i) => (
                 <button
                   key={i}
@@ -708,7 +736,7 @@ export default function App() {
                 <button onClick={goToDashboard} className="p-4 bg-white border border-slate-200 rounded-2xl"><X size={24} className="text-slate-400" /></button>
                 <h1 className="text-3xl md:text-4xl font-black">{selectedOrg.name}</h1>
               </div>
-              <button onClick={() => { setEditingItem(null); setDonationDonorId(''); setIsDonationModalOpen(true); }} className="bg-brand-navy text-white px-8 py-4 rounded-2xl font-black shadow-xl hover:bg-brand-navy/90"><Plus size={20} /> Record Donation</button>
+              <button onClick={() => { scrollToTop(); setEditingItem(null); setDonationDonorId(''); setIsDonationModalOpen(true); }} className="bg-brand-navy text-white px-8 py-4 rounded-2xl font-black shadow-xl hover:bg-brand-navy/90"><Plus size={20} /> Record Donation</button>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
