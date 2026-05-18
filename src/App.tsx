@@ -1,7 +1,7 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
 import { getAuth, signInAnonymously, onAuthStateChanged, User, Auth } from 'firebase/auth';
-import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, Firestore, QuerySnapshot, DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
+import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, getDocs, writeBatch, setDoc, Firestore, QuerySnapshot, DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
 import { 
   Plus, Building2, UserPlus, Trash2, Edit2, ChevronRight, 
   FileText, Search, Mail, X, Download, Eye, CheckCircle2,
@@ -15,6 +15,8 @@ import { BRAND, APP_STATE_KEY } from './constants/brand';
 import { downloadReceiptPdf, getReceiptFilename, openReceiptPdfInNewTab } from './utils/receiptPdf';
 import { sendReceiptEmailToDonor } from './utils/sendReceiptEmail';
 import { currentFinancialYear, formatDateDDMMYYYY, formatSentAt, todayInputDateValue } from './utils/format';
+import { DATA_COLLECTIONS, SHARED_WORKSPACE_ID, type DataCollectionName } from './constants/firestore';
+import { dataCollection, dataDoc } from './utils/firestorePaths';
 
 // --- Interfaces for TypeScript Safety ---
 interface Organization {
@@ -111,6 +113,8 @@ export default function App() {
   const [donationDonorId, setDonationDonorId] = useState<string>('');
   const [donorModalAfterSave, setDonorModalAfterSave] = useState<((donorId: string) => void) | null>(null);
   const [stateRestored, setStateRestored] = useState(false);
+  const [firestoreError, setFirestoreError] = useState<string | null>(null);
+  const migrationRanRef = useRef(false);
   
   // Filter States
   const [searchTerm, setSearchTerm] = useState<string>('');
@@ -229,7 +233,7 @@ export default function App() {
       });
       const { db } = firebaseRefs.current;
       if (db && user) {
-        await updateDoc(doc(collection(db, 'users', user.uid, 'donations'), donation.id), {
+        await updateDoc(dataDoc(db, 'donations', donation.id), {
           emailSentAt: new Date().toISOString(),
         });
       }
@@ -326,25 +330,87 @@ export default function App() {
     init();
   }, []);
 
-  // --- 2. Real-time Data Sync ---
+  // One-time: copy data from this device's old anonymous uid into the shared workspace
+  useEffect(() => {
+    const migrateLocalDataToSharedWorkspace = async () => {
+      const { db } = firebaseRefs.current;
+      if (!user || !db || !isAuthorized || migrationRanRef.current) return;
+      migrationRanRef.current = true;
+
+      try {
+        const sharedOrgs = await getDocs(dataCollection(db, 'organizations'));
+        if (!sharedOrgs.empty) return;
+
+        const localOrgs = await getDocs(
+          collection(db, 'users', user.uid, 'organizations')
+        );
+        if (localOrgs.empty) return;
+
+        for (const collName of DATA_COLLECTIONS) {
+          const snap = await getDocs(collection(db, 'users', user.uid, collName));
+          if (snap.empty) continue;
+
+          let batch = writeBatch(db);
+          let ops = 0;
+          for (const d of snap.docs) {
+            batch.set(doc(db, 'users', SHARED_WORKSPACE_ID, collName, d.id), d.data());
+            ops += 1;
+            if (ops >= 400) {
+              await batch.commit();
+              batch = writeBatch(db);
+              ops = 0;
+            }
+          }
+          if (ops > 0) await batch.commit();
+        }
+
+        await setDoc(doc(db, 'users', SHARED_WORKSPACE_ID, '_meta', 'workspace'), {
+          migratedFrom: user.uid,
+          migratedAt: new Date().toISOString(),
+        });
+      } catch (err) {
+        console.error('Firestore migration error:', err);
+      }
+    };
+
+    void migrateLocalDataToSharedWorkspace();
+  }, [user, isAuthorized]);
+
+  // --- 2. Real-time Data Sync (shared path — same data on all devices) ---
   useEffect(() => {
     const { db } = firebaseRefs.current;
     if (!user || !isAuthorized || !db) return;
 
-    const orgsRef = collection(db, 'users', user.uid, 'organizations');
-    const unsubOrgs = onSnapshot(orgsRef, (s: QuerySnapshot<DocumentData>) => {
-      setOrganizations(s.docs.map((d: QueryDocumentSnapshot<DocumentData>) => ({ id: d.id, ...d.data() } as Organization)));
-    });
+    setFirestoreError(null);
 
-    const donorsRef = collection(db, 'users', user.uid, 'donors');
-    const unsubDonors = onSnapshot(donorsRef, (s: QuerySnapshot<DocumentData>) => {
-      setMasterDonors(s.docs.map((d: QueryDocumentSnapshot<DocumentData>) => ({ id: d.id, ...d.data() } as Donor)));
-    });
+    const onSyncError = (err: Error) => {
+      console.error('Firestore sync error:', err);
+      setFirestoreError(err.message || 'Could not load data from the cloud.');
+    };
 
-    const donationsRef = collection(db, 'users', user.uid, 'donations');
-    const unsubDonations = onSnapshot(donationsRef, (s: QuerySnapshot<DocumentData>) => {
-      setAllDonations(s.docs.map((d: QueryDocumentSnapshot<DocumentData>) => ({ id: d.id, ...d.data() } as Donation)));
-    });
+    const unsubOrgs = onSnapshot(
+      dataCollection(db, 'organizations'),
+      (s: QuerySnapshot<DocumentData>) => {
+        setOrganizations(s.docs.map((d: QueryDocumentSnapshot<DocumentData>) => ({ id: d.id, ...d.data() } as Organization)));
+      },
+      onSyncError
+    );
+
+    const unsubDonors = onSnapshot(
+      dataCollection(db, 'donors'),
+      (s: QuerySnapshot<DocumentData>) => {
+        setMasterDonors(s.docs.map((d: QueryDocumentSnapshot<DocumentData>) => ({ id: d.id, ...d.data() } as Donor)));
+      },
+      onSyncError
+    );
+
+    const unsubDonations = onSnapshot(
+      dataCollection(db, 'donations'),
+      (s: QuerySnapshot<DocumentData>) => {
+        setAllDonations(s.docs.map((d: QueryDocumentSnapshot<DocumentData>) => ({ id: d.id, ...d.data() } as Donation)));
+      },
+      onSyncError
+    );
 
     return () => { unsubOrgs(); unsubDonors(); unsubDonations(); };
   }, [user, isAuthorized]);
@@ -430,14 +496,14 @@ export default function App() {
   };
 
   const upsert = async (
-    collectionName: string,
+    collectionName: DataCollectionName,
     data: Record<string, unknown>,
     id: string | null = null
   ): Promise<string | false> => {
     const { db } = firebaseRefs.current;
     if (!user || !db) return false;
     try {
-      const coll = collection(db, 'users', user.uid, collectionName);
+      const coll = dataCollection(db, collectionName);
       if (id) {
         await updateDoc(doc(coll, id), data);
         return id;
@@ -450,11 +516,11 @@ export default function App() {
     }
   };
 
-  const remove = async (collectionName: string, id: string) => {
+  const remove = async (collectionName: DataCollectionName, id: string) => {
     const { db } = firebaseRefs.current;
     if (!user || !db || !confirm("Delete permanently?")) return;
     try {
-      await deleteDoc(doc(db, 'users', user.uid, collectionName, id));
+      await deleteDoc(dataDoc(db, collectionName, id));
     } catch (err) { console.error(err); }
   };
 
@@ -553,6 +619,11 @@ export default function App() {
       </nav>
 
       <main className="max-w-7xl mx-auto p-6 md:p-8 flex-grow w-full print:hidden">
+        {firestoreError && (
+          <div className="mb-6 bg-red-50 border border-red-200 text-red-800 px-6 py-4 rounded-2xl text-sm font-medium">
+            Could not sync with the cloud: {firestoreError}. In Firebase Console, ensure Anonymous sign-in and Firestore are enabled.
+          </div>
+        )}
         {currentView === VIEWS.DASHBOARD && (
           <div className="space-y-8 animate-in fade-in">
             <div className="bg-brand-navy text-white rounded-[2rem] px-8 py-6 flex flex-wrap items-center justify-between gap-4 shadow-lg">
@@ -822,7 +893,7 @@ export default function App() {
       <footer className="bg-brand-navy text-white p-4 text-[10px] flex flex-wrap justify-between items-center gap-3 print:hidden">
         <div className="flex gap-4 items-center flex-wrap">
           <img src={BRAND.logo} alt="" className="h-6 w-6 object-contain rounded opacity-90" />
-          <div className="flex items-center gap-2 text-white/50"><Fingerprint size={12} /> ID: <span className="font-mono text-white/90 tracking-tighter">{user?.uid?.slice(0,12)}</span></div>
+          <div className="flex items-center gap-2 text-white/50"><Database size={12} /> Shared cloud data</div>
           <div className="flex items-center gap-2 text-white/50"><Database size={12} /> <span className="text-brand-gold font-bold uppercase">Cloud Active</span></div>
         </div>
         <div className="text-white/40 font-black tracking-widest uppercase">Lata Agrawal Foundation · 80G</div>
