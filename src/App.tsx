@@ -14,7 +14,7 @@ import { DonorSearchSelect } from './components/DonorSearchSelect';
 import { BRAND, APP_STATE_KEY } from './constants/brand';
 import { downloadReceiptPdf, getReceiptFilename, openReceiptPdfInNewTab } from './utils/receiptPdf';
 import { sendReceiptEmailToDonor } from './utils/sendReceiptEmail';
-import { currentFinancialYear, formatDateDDMMYYYY, formatSentAt, todayInputDateValue } from './utils/format';
+import { currentFinancialYear, formatDateDDMMYYYY, formatSentAt, todayInputDateValue, toInputDateValue } from './utils/format';
 import { DATA_COLLECTIONS, SHARED_WORKSPACE_ID, type DataCollectionName } from './constants/firestore';
 import { dataCollection, dataDoc } from './utils/firestorePaths';
 
@@ -104,6 +104,7 @@ export default function App() {
   const [isReceiptModalOpen, setIsReceiptModalOpen] = useState<boolean>(false);
   const [isEmailModalOpen, setIsEmailModalOpen] = useState<boolean>(false);
   const [editingItem, setEditingItem] = useState<any>(null);
+  const [editingDonation, setEditingDonation] = useState<Donation | null>(null);
   const [activeReceiptData, setActiveReceiptData] = useState<ReceiptData | null>(null);
   const [isPdfGenerating, setIsPdfGenerating] = useState<boolean>(false);
   const [pendingPdfAction, setPendingPdfAction] = useState<'download' | 'open' | null>(null);
@@ -464,6 +465,20 @@ export default function App() {
     setIsDonorModalOpen(true);
   };
 
+  const openDonationEditor = (donation: Donation, org?: Organization | null) => {
+    const targetOrg = org ?? getOrgForDonation(donation) ?? selectedOrg;
+    if (targetOrg) setSelectedOrg(targetOrg);
+    setEditingDonation(donation);
+    setDonationDonorId(donation.donorId || '');
+    setIsDonationModalOpen(true);
+  };
+
+  const closeDonationModal = () => {
+    setIsDonationModalOpen(false);
+    setDonationDonorId('');
+    setEditingDonation(null);
+  };
+
   const getOrgForDonation = (donation: Donation): Organization | undefined =>
     organizations.find((o) => o.id === donation.orgId);
 
@@ -783,6 +798,7 @@ export default function App() {
                             <button type="button" disabled={isPdfGenerating} onClick={() => { if (!d) return; const o = getOrgForDonation(dn); if (!o) return; setSelectedOrg(o); downloadReceiptFromLedger(d, dn); }} className="px-3 py-2 bg-brand-navy text-white rounded-xl text-[10px] font-black flex items-center gap-1 disabled:opacity-60"><Download size={12} /> PDF</button>
                             <button type="button" onClick={() => { if (!d) return; const o = getOrgForDonation(dn); if (!o) return; setSelectedOrg(o); openReceiptPreview(d, dn); }} className="p-2 hover:bg-slate-100 rounded-xl text-slate-600" title="Preview"><Eye size={16} /></button>
                             <button type="button" onClick={() => { if (!d) return; const o = getOrgForDonation(dn); if (!o) return; setSelectedOrg(o); openEmailModal(d, dn); }} className="p-2 hover:bg-emerald-50 rounded-xl text-emerald-600" title="Email"><Mail size={16} /></button>
+                            <button type="button" onClick={() => openDonationEditor(dn, org)} className="p-2 hover:bg-brand-cream rounded-xl text-brand-navy" title="Edit receipt"><Edit2 size={16} /></button>
                             {org && (
                               <button type="button" onClick={() => openLedger(org)} className="p-2 hover:bg-brand-cream rounded-xl text-brand-navy" title="Open ledger"><ChevronRight size={16} /></button>
                             )}
@@ -807,7 +823,7 @@ export default function App() {
                 <button onClick={goToDashboard} className="p-4 bg-white border border-slate-200 rounded-2xl"><X size={24} className="text-slate-400" /></button>
                 <h1 className="text-3xl md:text-4xl font-black">{selectedOrg.name}</h1>
               </div>
-              <button onClick={() => { scrollToTop(); setEditingItem(null); setDonationDonorId(''); setIsDonationModalOpen(true); }} className="bg-brand-navy text-white px-8 py-4 rounded-2xl font-black shadow-xl hover:bg-brand-navy/90"><Plus size={20} /> Record Donation</button>
+              <button onClick={() => { scrollToTop(); setEditingDonation(null); setDonationDonorId(''); setIsDonationModalOpen(true); }} className="bg-brand-navy text-white px-8 py-4 rounded-2xl font-black shadow-xl hover:bg-brand-navy/90 flex items-center gap-2"><Plus size={20} /> Record Donation</button>
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-4 gap-4 bg-white p-6 rounded-3xl border border-slate-200 shadow-sm">
@@ -871,7 +887,15 @@ export default function App() {
                                 >
                                   <Mail size={18} />
                                 </button>
-                                <button onClick={() => remove('donations', dn.id)} className="p-3 hover:bg-red-50 rounded-xl text-red-400"><Trash2 size={16}/></button>
+                                <button
+                                  type="button"
+                                  onClick={() => openDonationEditor(dn, selectedOrg)}
+                                  className="p-3 hover:bg-brand-cream rounded-xl text-brand-navy"
+                                  title="Edit 80G receipt"
+                                >
+                                  <Edit2 size={16} />
+                                </button>
+                                <button onClick={() => remove('donations', dn.id)} className="p-3 hover:bg-red-50 rounded-xl text-red-400" title="Delete receipt"><Trash2 size={16}/></button>
                               </div>
                               {dn.emailSentAt && (
                                 <span className="inline-flex items-center gap-1 text-[10px] font-bold text-emerald-700">
@@ -982,26 +1006,35 @@ export default function App() {
       {isDonationModalOpen && selectedOrg && (
         <div className="fixed inset-0 bg-slate-900/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="bg-white rounded-[2.5rem] w-full max-w-xl shadow-2xl animate-in zoom-in-95">
-            <form onSubmit={async (e: React.FormEvent<HTMLFormElement>) => { 
-              e.preventDefault(); 
-              const fd = new FormData(e.currentTarget); 
+            <form
+              key={editingDonation?.id ? `edit-${editingDonation.id}` : 'new-donation'}
+              onSubmit={async (e: React.FormEvent<HTMLFormElement>) => {
+              e.preventDefault();
+              const fd = new FormData(e.currentTarget);
               const amountStr = fd.get('amount') as string;
               const donorId = donationDonorId || (fd.get('donorId') as string);
               if (!donorId) { alert('Please select or add a donor.'); return; }
-              const data = {
+              const data: Record<string, unknown> = {
                 donorId,
                 date: fd.get('date'),
                 paymentMode: fd.get('paymentMode'),
                 refNo: fd.get('refNo') || '',
                 amount: parseFloat(amountStr),
                 orgId: selectedOrg.id,
-              }; 
-              if (await upsert('donations', data)) {
-                setIsDonationModalOpen(false);
-                setDonationDonorId('');
+              };
+              if (editingDonation?.emailSentAt) {
+                data.emailSentAt = editingDonation.emailSentAt;
+              }
+              if (await upsert('donations', data, editingDonation?.id ?? null)) {
+                closeDonationModal();
               }
             }} className="p-10 space-y-8">
-              <h2 className="text-3xl font-black">Record Donation</h2>
+              <h2 className="text-3xl font-black">{editingDonation ? 'Edit 80G Receipt' : 'Record Donation'}</h2>
+              {editingDonation && (
+                <p className="text-xs font-bold text-slate-400 -mt-4">
+                  Receipt No. 80G-{editingDonation.id.slice(-8).toUpperCase()}
+                </p>
+              )}
               <div className="space-y-6">
                 <div className="space-y-2">
                   <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Select Donor</label>
@@ -1028,29 +1061,31 @@ export default function App() {
                 <div className="grid grid-cols-2 gap-4">
                    <div className="space-y-2">
                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Amount (INR)</label>
-                     <input required type="number" name="amount" placeholder="₹" className="w-full px-6 py-4 border-2 border-slate-100 rounded-2xl font-black text-blue-600 outline-none" />
+                     <input required type="number" name="amount" placeholder="₹" defaultValue={editingDonation?.amount ?? ''} className="w-full px-6 py-4 border-2 border-slate-100 rounded-2xl font-black text-blue-600 outline-none" />
                    </div>
                    <div className="space-y-2">
                      <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Date</label>
-                     <input required type="date" name="date" defaultValue={todayInputDateValue()} className="w-full px-6 py-4 border-2 border-slate-100 rounded-2xl font-bold outline-none" />
+                     <input required type="date" name="date" defaultValue={editingDonation?.date ? toInputDateValue(editingDonation.date) : todayInputDateValue()} className="w-full px-6 py-4 border-2 border-slate-100 rounded-2xl font-bold outline-none" />
                    </div>
                 </div>
                 <div className="grid grid-cols-2 gap-4">
                   <div className="space-y-2">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">Payment Mode</label>
-                    <select required name="paymentMode" className="w-full px-6 py-4 border-2 border-slate-100 rounded-2xl font-bold bg-white">
+                    <select required name="paymentMode" defaultValue={editingDonation?.paymentMode || PAYMENT_MODES[0]} className="w-full px-6 py-4 border-2 border-slate-100 rounded-2xl font-bold bg-white">
                       {PAYMENT_MODES.map(p => <option key={p} value={p}>{p}</option>)}
                     </select>
                   </div>
                   <div className="space-y-2">
                     <label className="text-[10px] font-black text-slate-400 uppercase tracking-widest ml-1">UTR / Ref No.</label>
-                    <input name="refNo" placeholder="Optional" className="w-full px-6 py-4 border-2 border-slate-100 rounded-2xl font-bold uppercase outline-none" />
+                    <input name="refNo" placeholder="Optional" defaultValue={editingDonation?.refNo || ''} className="w-full px-6 py-4 border-2 border-slate-100 rounded-2xl font-bold uppercase outline-none" />
                   </div>
                 </div>
               </div>
               <div className="flex gap-4 pt-4">
-                <button type="button" onClick={() => setIsDonationModalOpen(false)} className="flex-1 py-5 border-2 rounded-3xl font-bold text-slate-400">Cancel</button>
-                <button type="submit" className="flex-1 py-5 bg-brand-navy text-white rounded-3xl font-black shadow-xl">Confirm Transaction</button>
+                <button type="button" onClick={closeDonationModal} className="flex-1 py-5 border-2 rounded-3xl font-bold text-slate-400">Cancel</button>
+                <button type="submit" className="flex-1 py-5 bg-brand-navy text-white rounded-3xl font-black shadow-xl">
+                  {editingDonation ? 'Save Changes' : 'Confirm Transaction'}
+                </button>
               </div>
             </form>
           </div>
