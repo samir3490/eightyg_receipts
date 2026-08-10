@@ -310,6 +310,14 @@ export default function App() {
 
   // --- 1. Firebase Initialization ---
   useEffect(() => {
+    let cancelled = false;
+    const loadingFallback = window.setTimeout(() => {
+      if (!cancelled) {
+        setIsLoading(false);
+        setFirestoreError('Authentication is taking too long. Check Firebase Anonymous sign-in and that this domain is authorized.');
+      }
+    }, 15000);
+
     const init = async () => {
       try {
         const app: FirebaseApp = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
@@ -317,18 +325,35 @@ export default function App() {
         const db: Firestore = getFirestore(app);
         firebaseRefs.current = { auth, db };
 
-        await signInAnonymously(auth);
-
+        // Listen first so loading always clears even if anonymous sign-in is slow
         onAuthStateChanged(auth, (u: User | null) => {
+          if (cancelled) return;
           setUser(u);
           setIsLoading(false);
+          window.clearTimeout(loadingFallback);
         });
+
+        if (!auth.currentUser) {
+          await signInAnonymously(auth);
+        }
       } catch (err) {
-        console.error("Firebase Init Error:", err);
-        setIsLoading(false);
+        console.error('Firebase Init Error:', err);
+        if (!cancelled) {
+          setIsLoading(false);
+          setFirestoreError(
+            err instanceof Error
+              ? err.message
+              : 'Firebase failed to start. Add this domain under Firebase Authentication → Authorized domains.'
+          );
+          window.clearTimeout(loadingFallback);
+        }
       }
     };
-    init();
+    void init();
+    return () => {
+      cancelled = true;
+      window.clearTimeout(loadingFallback);
+    };
   }, []);
 
   // One-time: copy data from this device's old anonymous uid into the shared workspace
