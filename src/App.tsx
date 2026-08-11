@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useMemo, useRef } from 'react';
 import { initializeApp, getApps, getApp, FirebaseApp } from 'firebase/app';
-import { getAuth, signInAnonymously, onAuthStateChanged, User, Auth } from 'firebase/auth';
+import { getAuth, signInWithEmailAndPassword, signOut, onAuthStateChanged, User, Auth } from 'firebase/auth';
 import { getFirestore, collection, doc, addDoc, updateDoc, deleteDoc, onSnapshot, getDocs, writeBatch, setDoc, Firestore, QuerySnapshot, DocumentData, QueryDocumentSnapshot } from 'firebase/firestore';
 import { 
   Plus, Building2, UserPlus, Trash2, Edit2, ChevronRight, 
@@ -98,6 +98,7 @@ export default function App() {
   const [selectedOrg, setSelectedOrg] = useState<Organization | null>(null);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [loginError, setLoginError] = useState<string>('');
+  const [isLoggingIn, setIsLoggingIn] = useState<boolean>(false);
   const [isOrgModalOpen, setIsOrgModalOpen] = useState<boolean>(false);
   const [isDonorModalOpen, setIsDonorModalOpen] = useState<boolean>(false);
   const [isDonationModalOpen, setIsDonationModalOpen] = useState<boolean>(false);
@@ -312,44 +313,32 @@ export default function App() {
   useEffect(() => {
     let cancelled = false;
     const loadingFallback = window.setTimeout(() => {
-      if (!cancelled) {
+      if (!cancelled) setIsLoading(false);
+    }, 8000);
+
+    try {
+      const app: FirebaseApp = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
+      const auth: Auth = getAuth(app);
+      const db: Firestore = getFirestore(app);
+      firebaseRefs.current = { auth, db };
+
+      onAuthStateChanged(auth, (u: User | null) => {
+        if (cancelled) return;
+        setUser(u);
+        if (u && !u.isAnonymous) {
+          setIsAuthorized(true);
+          localStorage.setItem('isAuthorized_80G', 'true');
+        }
         setIsLoading(false);
-        setFirestoreError('Authentication is taking too long. Check Firebase Anonymous sign-in and that this domain is authorized.');
-      }
-    }, 15000);
+        window.clearTimeout(loadingFallback);
+      });
+    } catch (err) {
+      console.error('Firebase Init Error:', err);
+      setIsLoading(false);
+      setFirestoreError(err instanceof Error ? err.message : 'Firebase failed to start.');
+      window.clearTimeout(loadingFallback);
+    }
 
-    const init = async () => {
-      try {
-        const app: FirebaseApp = getApps().length > 0 ? getApp() : initializeApp(firebaseConfig);
-        const auth: Auth = getAuth(app);
-        const db: Firestore = getFirestore(app);
-        firebaseRefs.current = { auth, db };
-
-        // Listen first so loading always clears even if anonymous sign-in is slow
-        onAuthStateChanged(auth, (u: User | null) => {
-          if (cancelled) return;
-          setUser(u);
-          setIsLoading(false);
-          window.clearTimeout(loadingFallback);
-        });
-
-        if (!auth.currentUser) {
-          await signInAnonymously(auth);
-        }
-      } catch (err) {
-        console.error('Firebase Init Error:', err);
-        if (!cancelled) {
-          setIsLoading(false);
-          setFirestoreError(
-            err instanceof Error
-              ? err.message
-              : 'Firebase failed to start. Add this domain under Firebase Authentication → Authorized domains.'
-          );
-          window.clearTimeout(loadingFallback);
-        }
-      }
-    };
-    void init();
     return () => {
       cancelled = true;
       window.clearTimeout(loadingFallback);
@@ -508,16 +497,45 @@ export default function App() {
     organizations.find((o) => o.id === donation.orgId);
 
   // --- 4. Handlers ---
-  const handleLogin = (e: React.FormEvent<HTMLFormElement>) => {
+  const handleLogin = async (e: React.FormEvent<HTMLFormElement>) => {
     e.preventDefault();
+    const { auth } = firebaseRefs.current;
+    if (!auth) {
+      setLoginError('Firebase is not ready. Refresh and try again.');
+      return;
+    }
+
     const fd = new FormData(e.currentTarget);
-    if (fd.get('email') === 'admin@agrawalfoundation.org' && fd.get('password') === 'Password@123') {
+    const email = String(fd.get('email') || '').trim();
+    const password = String(fd.get('password') || '');
+    setLoginError('');
+    setIsLoggingIn(true);
+
+    try {
+      await signInWithEmailAndPassword(auth, email, password);
       setIsAuthorized(true);
       localStorage.setItem('isAuthorized_80G', 'true');
-    } else { setLoginError('Invalid Credentials'); }
+      setFirestoreError(null);
+    } catch (err) {
+      const code = err && typeof err === 'object' && 'code' in err ? String((err as { code: string }).code) : '';
+      if (code === 'auth/invalid-credential' || code === 'auth/wrong-password' || code === 'auth/user-not-found' || code === 'auth/invalid-email') {
+        setLoginError('Invalid email or password. Use the Firebase staff account (Email/Password provider).');
+      } else if (code === 'auth/operation-not-allowed') {
+        setLoginError('Email/Password sign-in is disabled. Enable it in Firebase Authentication → Sign-in method.');
+      } else if (code === 'auth/admin-restricted-operation') {
+        setLoginError('Firebase is blocking sign-in. Enable Email/Password and allow this user in Authentication.');
+      } else {
+        setLoginError(err instanceof Error ? err.message : 'Sign-in failed.');
+      }
+    } finally {
+      setIsLoggingIn(false);
+    }
   };
 
   const handleLogout = () => {
+    const { auth } = firebaseRefs.current;
+    if (auth) void signOut(auth);
+    setUser(null);
     setIsAuthorized(false);
     localStorage.removeItem('isAuthorized_80G');
     sessionStorage.removeItem(APP_STATE_KEY);
@@ -587,7 +605,7 @@ export default function App() {
   if (isLoading) return <div className="min-h-screen flex items-center justify-center bg-slate-50"><div className="animate-spin rounded-full h-12 w-12 border-b-2 border-brand-gold"></div></div>;
 
   // --- 6. Security Screen ---
-  if (!isAuthorized) {
+  if (!isAuthorized || !user) {
     return (
       <div className="min-h-screen bg-brand-cream flex items-center justify-center p-6 font-sans">
         <div className="bg-white w-full max-w-md rounded-[2.5rem] shadow-2xl overflow-hidden border border-brand-gold/20">
@@ -606,8 +624,8 @@ export default function App() {
               <input required name="password" type="password" placeholder="••••••••" className="w-full p-4 border-2 border-slate-100 rounded-2xl focus:border-brand-gold outline-none font-bold" />
             </div>
             {loginError && <p className="text-red-500 text-center font-bold text-xs bg-red-50 p-3 rounded-xl">{loginError}</p>}
-            <button className="w-full bg-brand-navy text-white py-5 rounded-2xl font-black text-xl hover:bg-brand-navy/90 shadow-xl transition-all active:scale-95 flex items-center justify-center gap-2">
-              <Lock className="w-5 h-5" /> Sign In
+            <button disabled={isLoggingIn} className="w-full bg-brand-navy text-white py-5 rounded-2xl font-black text-xl hover:bg-brand-navy/90 shadow-xl transition-all active:scale-95 flex items-center justify-center gap-2 disabled:opacity-60">
+              <Lock className="w-5 h-5" /> {isLoggingIn ? 'Signing in…' : 'Sign In'}
             </button>
           </form>
         </div>
@@ -661,7 +679,7 @@ export default function App() {
       <main className="max-w-7xl mx-auto p-6 md:p-8 flex-grow w-full print:hidden">
         {firestoreError && (
           <div className="mb-6 bg-red-50 border border-red-200 text-red-800 px-6 py-4 rounded-2xl text-sm font-medium">
-            Could not sync with the cloud: {firestoreError}. In Firebase Console, ensure Anonymous sign-in and Firestore are enabled.
+            Could not sync with the cloud: {firestoreError}
           </div>
         )}
         {currentView === VIEWS.DASHBOARD && (
